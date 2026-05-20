@@ -3,6 +3,17 @@
 Longer-term direction: bigger changes, methodological shifts, planned architecture work.
 For known shortcuts and deferred fixes, see `TECHDEBT.md`.
 
+
+## Setup validation
+
+**Goal:** confirm the current end-to-end setup actually works before building on it.
+
+- Run a **full training run** (not just the celebahq smoke test) with the current `LatentEncoder` baseline.
+- Run **evaluation** on the resulting checkpoint and inspect the metrics and decomposition visualizations.
+- Decide from the results whether the baseline is sound enough to build on, or whether anything in `TECHDEBT.md` needs fixing first.
+
+This validation is the prerequisite for the slot-extraction work below — it establishes the baseline that the encoder + slot-attention version is compared against.
+
 ## Slot extraction: encoder + slot attention
 
 **Goal:** move slot extraction to a **(trained or pretrained) encoder — e.g. DINO — followed by a slot attention module**. This is the intended object-centric design and the canonical Latent Slot Diffusion pattern: encoder → feature map → slot attention → slots.

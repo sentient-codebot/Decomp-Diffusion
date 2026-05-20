@@ -37,7 +37,7 @@ Optional extras:
 
 ## Project tracking
 
-- `ROADMAP.md` — longer-term direction: bigger changes, methodological shifts, planned architecture work. Keep it current when project goals change.
+- `ROADMAP.md` — longer-term direction: bigger changes, methodological shifts, planned architecture work. Keep it current when project goals change. When an experiment is launched that addresses a roadmap point (partially or fully), note it under that point: how to find the run (e.g. Slurm job id, job script under `jobs/`, wandb/output path) and the result report file under `docs/` once written.
 - `TECHDEBT.md` — known shortcuts, divergences, and deferred fixes. Add an entry when you discover or introduce debt; remove it when resolved.
 
 ## Jobs and experiment reports
