@@ -1,0 +1,43 @@
+# Decomp-Diffusion
+
+Latent Slot Diffusion with decomposed representations: trains a UNet diffusion model conditioned on slot-based latent encodings of input images.
+
+## Environment
+
+Managed by [uv](https://github.com/astral-sh/uv).
+
+- Sync: `uv sync --extra wandb --extra tensorboard --extra xformers`
+- Run: prefix commands with `uv run` (e.g. `uv run accelerate launch ...`)
+- The lock is multi-platform; on Linux, torch resolves to the CUDA 12.4 wheel via the `pytorch-cu124` index declared in `pyproject.toml`.
+
+Optional extras:
+- `wandb`, `tensorboard` — logging backends
+- `xformers` — only needed with `--enable_xformers_memory_efficient_attention`
+- `preprocess` — `tensorflow` / `tfds`, used solely by `scripts/data_preprocess/movi_kubric_dump_with_labels.py`
+
+## Layout
+
+- `train_lsd.py` — training entrypoint, launched via `accelerate launch`
+- `eval.py` / `eval.sh` — evaluation entrypoint
+- `src/models/` — backbone, latent encoder, UNet variants, ColorMask viz utils
+- `src/pipeline/composable_stable_diffusion_pipeline.py` — custom diffusion pipeline
+- `src/data/dataset.py` — `GlobDataset`
+- `src/parser.py` — shared argparse for train + eval
+- `configs/celebahq/` — celebahq config jsons (backbone, encoder, unet, scheduler)
+- `scripts/environment.sh` — uv bootstrap
+- `scripts/data_preprocess/` — MOVi/Kubric preprocessing (requires `preprocess` extra)
+
+## Conventions
+
+- **Commits:** see `CONTRIBUTING.md` — `<type>(<scope>): <description>`, lowercase, imperative, no trailing period, <60 chars. Types: `feat`, `fix`, `exp`, `refactor`, `build`, `chore`, `perf`, `docs`, `test`.
+- **Lint/format:** `ruff.toml` configures ruff. Run via `uvx ruff check` and `uvx ruff format` (ruff is not a project dep).
+
+## Reproducibility notes
+
+Dependency caps in `pyproject.toml` are deliberately conservative to keep experimental results close to the original conda env:
+- `diffusers <0.32` (original was 0.25.1; the pipeline file requires ≥0.27 because of `FusedAttnProcessor2_0`)
+- `transformers <5.0` — stays on the v4 API the code was written against
+- `numpy <2.0`
+- `torch >=2.5,<2.7` with CUDA 12.4 (upgraded from 2.0.1+cu118)
+
+If you bump any of these, re-run training to confirm metrics before trusting results.
