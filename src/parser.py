@@ -1,6 +1,6 @@
-import os
 import argparse
-import warnings
+import os
+
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -27,7 +27,9 @@ def parse_args(input_args=None):
         default="log",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="A seed for reproducible training."
+    )
     parser.add_argument(
         "--resolution",
         type=int,
@@ -37,14 +39,18 @@ def parse_args(input_args=None):
             " resolution"
         ),
     )
-    
+
     parser.add_argument(
-        "--train_batch_size", type=int, default=4, 
-        help="Batch size (per device) for the training dataloader."
+        "--train_batch_size",
+        type=int,
+        default=4,
+        help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
-        "--val_batch_size", type=int, default=4, 
-        help="Batch size (per device) for the validation dataloader."
+        "--val_batch_size",
+        type=int,
+        default=4,
+        help="Batch size (per device) for the validation dataloader.",
     )
     parser.add_argument("--num_train_epochs", type=int, default=1)
     parser.add_argument(
@@ -65,10 +71,8 @@ def parse_args(input_args=None):
         "--checkpoints_total_limit",
         type=int,
         default=None,
-        help=(
-            "Max number of checkpoints to store."
-        ),
-    ) # for reference: for movi-e experiment, each pack of ckpt takes roughly 3.9GB. model weights are only < 1.4g though, just the optimizer state is huge 2.6g
+        help=("Max number of checkpoints to store."),
+    )  # for reference: for movi-e experiment, each pack of ckpt takes roughly 3.9GB. model weights are only < 1.4g though, just the optimizer state is huge 2.6g
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
@@ -101,9 +105,11 @@ def parse_args(input_args=None):
         default=False,
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
     )
-    
+
     parser.add_argument(
-        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
+        "--use_8bit_adam",
+        action="store_true",
+        help="Whether or not to use 8-bit Adam from bitsandbytes.",
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -113,13 +119,41 @@ def parse_args(input_args=None):
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
     )
-    parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
-    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
-    parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
-    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
-    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument("--hub_token", type=str, default=None, help="The token to use to push to the Model Hub.")
+    parser.add_argument(
+        "--adam_beta1",
+        type=float,
+        default=0.9,
+        help="The beta1 parameter for the Adam optimizer.",
+    )
+    parser.add_argument(
+        "--adam_beta2",
+        type=float,
+        default=0.999,
+        help="The beta2 parameter for the Adam optimizer.",
+    )
+    parser.add_argument(
+        "--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use."
+    )
+    parser.add_argument(
+        "--adam_epsilon",
+        type=float,
+        default=1e-08,
+        help="Epsilon value for the Adam optimizer",
+    )
+    parser.add_argument(
+        "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+    )
+    parser.add_argument(
+        "--push_to_hub",
+        action="store_true",
+        help="Whether or not to push the model to the Hub.",
+    )
+    parser.add_argument(
+        "--hub_token",
+        type=str,
+        default=None,
+        help="The token to use to push to the Model Hub.",
+    )
     # parser.add_argument(
     #     "--hub_model_id",
     #     type=str,
@@ -152,7 +186,7 @@ def parse_args(input_args=None):
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
     )
-    
+
     parser.add_argument(
         "--num_validation_images",
         type=int,
@@ -179,11 +213,18 @@ def parse_args(input_args=None):
             " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
         ),
-    ) # recommended 
-    
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    )  # recommended
+
     parser.add_argument(
-        "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="For distributed training: local_rank",
+    )
+    parser.add_argument(
+        "--enable_xformers_memory_efficient_attention",
+        action="store_true",
+        help="Whether or not to use xformers.",
     )
     parser.add_argument(
         "--set_grads_to_none",
@@ -211,7 +252,7 @@ def parse_args(input_args=None):
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
         "More details here: https://arxiv.org/abs/2303.09556.",
     )
-    
+
     parser.add_argument(
         "--validation_scheduler",
         type=str,
@@ -306,17 +347,20 @@ def parse_args(input_args=None):
 
     return args
 
+
 if __name__ == "__main__":
     # define and save scheduler config from here
     import os
     import sys
+
     if __name__ == "__main__":
-        sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+        sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
     from diffusers.schedulers import DDPMScheduler
+
     scheduler = DDPMScheduler(
         num_train_timesteps=1000,
-        beta_start= 0.00085,
+        beta_start=0.00085,
         beta_end=0.0120,
-        beta_schedule='linear',
+        beta_schedule="linear",
     )
     scheduler.save_config("./configs/movi-e/scheduler")

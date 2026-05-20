@@ -1,16 +1,12 @@
-import argparse
 import copy
-import gc
-import hashlib
 import importlib
-import itertools
 import logging
 import math
 import os
 import shutil
-import warnings
 from pathlib import Path
 
+import diffusers
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -19,33 +15,30 @@ import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
-from huggingface_hub import create_repo
-from packaging import version
-from PIL import Image
-from tqdm.auto import tqdm
-from torchvision.utils import make_grid
-
-import diffusers
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    StableDiffusionPipeline,
     UNet2DConditionModel,
 )
+
 # from diffusers.training_utils import compute_snr # diffusers is still working on this, uncomment in future versions
-from diffusers.utils import check_min_version, is_wandb_available
+from diffusers.utils import is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from einops import rearrange
+from huggingface_hub import create_repo
+from packaging import version
+from PIL import Image
+from torchvision.utils import make_grid
+from tqdm.auto import tqdm
 
-from einops import rearrange, reduce, repeat
-
+from src.data.dataset import GlobDataset
 from src.models.backbone import UNetEncoder
 from src.models.encoder import LatentEncoder
-from src.data.dataset import GlobDataset
-from src.pipeline.composable_stable_diffusion_pipeline import ComposableStableDiffusionPipeline
-
 from src.parser import parse_args
+from src.pipeline.composable_stable_diffusion_pipeline import (
+    ComposableStableDiffusionPipeline,
+)
 
-from src.models.utils import ColorMask
 
 if is_wandb_available():
     import wandb
@@ -66,13 +59,10 @@ def log_validation(
     weight_dtype,
     global_step,
 ):
-    logger.info(
-        f"Running validation... \n."
-    )
+    logger.info("Running validation... \n.")
     unet = accelerator.unwrap_model(unet)
     backbone = accelerator.unwrap_model(backbone)
     latent_encoder = accelerator.unwrap_model(latent_encoder)
-
 
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
@@ -95,8 +85,7 @@ def log_validation(
     # use a more efficient scheduler at test time
     module = importlib.import_module("diffusers")
     scheduler_class = getattr(module, args.validation_scheduler)
-    scheduler = scheduler_class.from_config(
-        scheduler.config, **scheduler_args)
+    scheduler = scheduler_class.from_config(scheduler.config, **scheduler_args)
 
     pipeline = ComposableStableDiffusionPipeline(
         vae=vae,
@@ -113,71 +102,89 @@ def log_validation(
     pipeline.set_progress_bar_config(disable=True)
 
     # run inference
-    generator = None if args.seed is None else torch.Generator(
-        device=accelerator.device).manual_seed(args.seed)
+    generator = (
+        None
+        if args.seed is None
+        else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+    )
 
     num_digits = len(str(args.max_train_steps))
     folder_name = f"image_logging_{global_step:0{num_digits}}"
-    image_log_dir = os.path.join(accelerator.logging_dir, folder_name, )
+    image_log_dir = os.path.join(
+        accelerator.logging_dir,
+        folder_name,
+    )
     os.makedirs(image_log_dir, exist_ok=True)
 
     images = []
     image_count = 0
 
     for batch_idx, batch in enumerate(val_dataloader):
-
         pixel_values = batch["pixel_values"].to(
-            device=accelerator.device, dtype=weight_dtype)
+            device=accelerator.device, dtype=weight_dtype
+        )
 
         with torch.autocast("cuda"):
             model_input = vae.encode(pixel_values).latent_dist.sample()
             pixel_values_recon = vae.decode(model_input).sample
 
             if args.backbone_config == "pretrain_dino":
-                pixel_values_vit = batch["pixel_values_vit"].to(device=accelerator.device, 
-                                                                dtype=weight_dtype)
+                pixel_values_vit = batch["pixel_values_vit"].to(
+                    device=accelerator.device, dtype=weight_dtype
+                )
                 feat = backbone(pixel_values_vit)
             else:
                 feat = backbone(pixel_values)
             slots = latent_encoder(pixel_values)  # for the time dimension
 
             images_gen_0 = pipeline(
-                prompt_embeds=slots[:, 0, :].unsqueeze(1).to(device=accelerator.device, dtype=weight_dtype),
+                prompt_embeds=slots[:, 0, :]
+                .unsqueeze(1)
+                .to(device=accelerator.device, dtype=weight_dtype),
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,
                 generator=generator,
-                guidance_scale=1.,
+                guidance_scale=1.0,
                 output_type="pt",
             ).images
 
             images_gen_1 = pipeline(
-                prompt_embeds=slots[:, 1, :].unsqueeze(1).type(slots.dtype).to(slots.device),
+                prompt_embeds=slots[:, 1, :]
+                .unsqueeze(1)
+                .type(slots.dtype)
+                .to(slots.device),
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,
                 generator=generator,
-                guidance_scale=1.,
+                guidance_scale=1.0,
                 output_type="pt",
             ).images
 
             images_gen_2 = pipeline(
-                prompt_embeds=slots[:, 2, :].unsqueeze(1).type(slots.dtype).to(slots.device),
+                prompt_embeds=slots[:, 2, :]
+                .unsqueeze(1)
+                .type(slots.dtype)
+                .to(slots.device),
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,
                 generator=generator,
-                guidance_scale=1.,
+                guidance_scale=1.0,
                 output_type="pt",
             ).images
 
             images_gen_3 = pipeline(
-                prompt_embeds=slots[:, 3, :].unsqueeze(1).type(slots.dtype).to(slots.device),
+                prompt_embeds=slots[:, 3, :]
+                .unsqueeze(1)
+                .type(slots.dtype)
+                .to(slots.device),
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,
                 generator=generator,
-                guidance_scale=1.,
+                guidance_scale=1.0,
                 output_type="pt",
             ).images
 
@@ -187,14 +194,38 @@ def log_validation(
                 width=args.resolution,
                 num_inference_steps=25,
                 generator=generator,
-                guidance_scale=1.,
+                guidance_scale=1.0,
                 output_type="pt",
             ).images
 
-        grid_image = torch.cat([pixel_values.unsqueeze(1)*0.5+0.5, images_gen_0.unsqueeze(1), images_gen_1.unsqueeze(1),
-                  images_gen_2.unsqueeze(1), images_gen_3.unsqueeze(1), images_recon.unsqueeze(1)], dim=1)
-        grid_image = make_grid(grid_image.view(grid_image.shape[0]*grid_image.shape[1], grid_image.shape[2], grid_image.shape[3], grid_image.shape[4],), nrow=grid_image.shape[1])
-        ndarr = grid_image.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+        grid_image = torch.cat(
+            [
+                pixel_values.unsqueeze(1) * 0.5 + 0.5,
+                images_gen_0.unsqueeze(1),
+                images_gen_1.unsqueeze(1),
+                images_gen_2.unsqueeze(1),
+                images_gen_3.unsqueeze(1),
+                images_recon.unsqueeze(1),
+            ],
+            dim=1,
+        )
+        grid_image = make_grid(
+            grid_image.view(
+                grid_image.shape[0] * grid_image.shape[1],
+                grid_image.shape[2],
+                grid_image.shape[3],
+                grid_image.shape[4],
+            ),
+            nrow=grid_image.shape[1],
+        )
+        ndarr = (
+            grid_image.mul(255)
+            .add_(0.5)
+            .clamp_(0, 255)
+            .permute(1, 2, 0)
+            .to("cpu", torch.uint8)
+            .numpy()
+        )
         im = Image.fromarray(ndarr)
         images.append(im)
         img_path = os.path.join(image_log_dir, f"image_{batch_idx:02}.jpg")
@@ -207,12 +238,14 @@ def log_validation(
         if tracker.name == "tensorboard":
             np_images = np.stack([np.asarray(img) for img in images])
             tracker.writer.add_images(
-                "validation", np_images, global_step, dataformats="NHWC")
+                "validation", np_images, global_step, dataformats="NHWC"
+            )
         if tracker.name == "wandb":
             tracker.log(
                 {
                     "validation": [
-                        wandb.Image(image, caption=f"{i}") for i, image in enumerate(images)
+                        wandb.Image(image, caption=f"{i}")
+                        for i, image in enumerate(images)
                     ]
                 }
             )
@@ -238,7 +271,8 @@ def main(args):
     if args.report_to == "wandb":
         if not is_wandb_available():
             raise ImportError(
-                "Make sure to install wandb if you want to use it for logging during training.")
+                "Make sure to install wandb if you want to use it for logging during training."
+            )
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -265,20 +299,22 @@ def main(args):
 
         if args.push_to_hub:
             repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
+                repo_id=args.hub_model_id or Path(args.output_dir).name,
+                exist_ok=True,
+                token=args.hub_token,
             ).repo_id
 
     # Load scheduler and models
     if args.unet_config == "pretrain_sd":
         noise_scheduler = DDPMScheduler.from_pretrained(
-        args.pretrained_model_name, subfolder="scheduler")
+            args.pretrained_model_name, subfolder="scheduler"
+        )
     else:
         noise_scheduler_config = DDPMScheduler.load_config(args.scheduler_config)
         noise_scheduler = DDPMScheduler.from_config(noise_scheduler_config)
 
-    vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name, subfolder="vae")
-    
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name, subfolder="vae")
+
     if os.path.exists(args.backbone_config):
         train_backbone = True
         backbone_config = UNetEncoder.load_config(args.backbone_config)
@@ -286,6 +322,7 @@ def main(args):
     elif args.backbone_config == "pretrain_dino":
         train_backbone = False
         dinov2 = torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14")
+
         class DINOBackbone(torch.nn.Module):
             def __init__(self, dinov2):
                 super().__init__()
@@ -294,14 +331,14 @@ def main(args):
             def forward(self, x):
                 enc_out = self.dinov2.forward_features(x)
                 return rearrange(
-                    enc_out["x_norm_patchtokens"], 
+                    enc_out["x_norm_patchtokens"],
                     "b (h w ) c -> b c h w",
-                    h=int(np.sqrt(enc_out["x_norm_patchtokens"].shape[-2]))
+                    h=int(np.sqrt(enc_out["x_norm_patchtokens"].shape[-2])),
                 )
+
         backbone = DINOBackbone(dinov2)
     else:
-        raise ValueError(
-            f"Unknown unet config {args.unet_config}")
+        raise ValueError(f"Unknown unet config {args.unet_config}")
 
     latent_encoder_config = LatentEncoder.load_config(args.latent_encoder_config)
     latent_encoder = LatentEncoder.from_config(latent_encoder_config)
@@ -316,17 +353,17 @@ def main(args):
             args.pretrained_model_name, subfolder="unet", revision=args.revision
         )
     else:
-        raise ValueError(
-            f"Unknown unet config {args.unet_config}")
+        raise ValueError(f"Unknown unet config {args.unet_config}")
 
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
 
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             for model in models:
-
                 # continue if not one of [UNetEncoder, MultiHeadSTEVESA, UNet2DConditionModelWithPos]
-                if not isinstance(model, (UNetEncoder, LatentEncoder, UNet2DConditionModel)):
+                if not isinstance(
+                    model, (UNetEncoder, LatentEncoder, UNet2DConditionModel)
+                ):
                     continue
 
                 sub_dir = model._get_name().lower()
@@ -345,20 +382,18 @@ def main(args):
 
             if isinstance(model, UNetEncoder):
                 # load diffusers style into model
-                load_model = UNetEncoder.from_pretrained(
-                    input_dir, subfolder=sub_dir)
+                load_model = UNetEncoder.from_pretrained(input_dir, subfolder=sub_dir)
                 model.register_to_config(**load_model.config)
             elif isinstance(model, LatentEncoder):
-                load_model = LatentEncoder.from_pretrained(
-                    input_dir, subfolder=sub_dir)
+                load_model = LatentEncoder.from_pretrained(input_dir, subfolder=sub_dir)
                 model.register_to_config(**load_model.config)
             elif isinstance(model, UNet2DConditionModel):
                 load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder=sub_dir)
+                    input_dir, subfolder=sub_dir
+                )
                 model.register_to_config(**load_model.config)
             else:
-                raise ValueError(
-                    f"Unknown model type {type(model)}")
+                raise ValueError(f"Unknown model type {type(model)}")
 
             model.load_state_dict(load_model.state_dict())
             del load_model
@@ -374,7 +409,7 @@ def main(args):
             pass
     if not train_unet:
         unet.requires_grad_(False)
-        
+
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
@@ -391,14 +426,15 @@ def main(args):
                 pass
         else:
             raise ValueError(
-                "xformers is not available. Make sure it is installed correctly")
+                "xformers is not available. Make sure it is installed correctly"
+            )
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
         try:
             backbone.enable_gradient_checkpointing()
         except AttributeError:
-                pass
+            pass
 
     # Check that all trainable models are in full precision
     low_precision_error_string = (
@@ -428,8 +464,10 @@ def main(args):
 
     if args.scale_lr:
         args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps *
-            args.train_batch_size * accelerator.num_processes
+            args.learning_rate
+            * args.gradient_accumulation_steps
+            * args.train_batch_size
+            * accelerator.num_processes
         )
 
     # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
@@ -445,19 +483,20 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-
-    params_to_optimize = list(latent_encoder.parameters()) + \
-        (list(backbone.parameters()) if train_backbone else []) + \
-        (list(unet.parameters()) if train_unet else [])
+    params_to_optimize = (
+        list(latent_encoder.parameters())
+        + (list(backbone.parameters()) if train_backbone else [])
+        + (list(unet.parameters()) if train_unet else [])
+    )
     params_group = [
-        {'params': list(latent_encoder.parameters()) + \
-         (list(backbone.parameters()) if train_backbone else []),
-         'lr': args.learning_rate * args.encoder_lr_scale}
+        {
+            "params": list(latent_encoder.parameters())
+            + (list(backbone.parameters()) if train_backbone else []),
+            "lr": args.learning_rate * args.encoder_lr_scale,
+        }
     ]
     if train_unet:
-        params_group.append(
-            {'params': unet.parameters(), "lr": args.learning_rate}
-        )
+        params_group.append({"params": unet.parameters(), "lr": args.learning_rate})
 
     optimizer = optimizer_class(
         params_group,
@@ -467,7 +506,7 @@ def main(args):
         eps=args.adam_epsilon,
     )
 
-    '''def warm_and_decay_lr_scheduler(step: int):
+    """def warm_and_decay_lr_scheduler(step: int):
         warmup_steps = 10000
         decay_steps = 100000
         if step < warmup_steps:
@@ -481,12 +520,11 @@ def main(args):
     # the template for your reference
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lr_lambda=warm_and_decay_lr_scheduler
-        )'''
+        )"""
 
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lr_lambda=[lambda _: 1, lambda _: 1] if train_unet else [lambda _: 1]
     )
-
 
     train_dataset = GlobDataset(
         root=args.dataset_root,
@@ -495,7 +533,7 @@ def main(args):
         data_portion=(0.0, args.train_split_portion),
         vit_norm=args.backbone_config == "pretrain_dino",
         random_flip=args.flip_images,
-        vit_input_resolution=args.vit_input_resolution
+        vit_input_resolution=args.vit_input_resolution,
     )
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -510,15 +548,19 @@ def main(args):
         root=args.dataset_root,
         img_size=args.resolution,
         img_glob=args.dataset_glob,
-        data_portion=(args.train_split_portion if args.train_split_portion < 1. else 0.9, 1.0),
+        data_portion=(
+            args.train_split_portion if args.train_split_portion < 1.0 else 0.9,
+            1.0,
+        ),
         vit_norm=args.backbone_config == "pretrain_dino",
-        vit_input_resolution=args.vit_input_resolution
+        vit_input_resolution=args.vit_input_resolution,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps)
+        len(train_dataloader) / args.gradient_accumulation_steps
+    )
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -553,44 +595,46 @@ def main(args):
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps)
+        len(train_dataloader) / args.gradient_accumulation_steps
+    )
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
-    args.num_train_epochs = math.ceil(
-        args.max_train_steps / num_update_steps_per_epoch)
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
         tracker_config = vars(copy.deepcopy(args))
-        accelerator.init_trackers(
-            args.tracker_project_name, config=tracker_config
-        )
+        accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
 
     # Train!
-    total_batch_size = args.train_batch_size * \
-        accelerator.num_processes * args.gradient_accumulation_steps
+    total_batch_size = (
+        args.train_batch_size
+        * accelerator.num_processes
+        * args.gradient_accumulation_steps
+    )
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(
-        f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(
-        f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    )
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-    accumulate_steps = 0 # necessary for args.gradient_accumulation_steps > 1
+    accumulate_steps = 0  # necessary for args.gradient_accumulation_steps > 1
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
-            path = os.path.basename(args.resume_from_checkpoint.rstrip('/')) # only the checkpoint folder name is needed, not the full path
+            path = os.path.basename(
+                args.resume_from_checkpoint.rstrip("/")
+            )  # only the checkpoint folder name is needed, not the full path
         else:
             # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
@@ -622,7 +666,8 @@ def main(args):
         desc="Steps",
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
-        position=0, leave=True
+        position=0,
+        leave=True,
     )
 
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -641,21 +686,27 @@ def main(args):
             # Sample noise that we'll add to the model input
             if args.offset_noise:
                 noise = torch.randn_like(model_input) + 0.1 * torch.randn(
-                    model_input.shape[0], model_input.shape[1], 1, 1, device=model_input.device
+                    model_input.shape[0],
+                    model_input.shape[1],
+                    1,
+                    1,
+                    device=model_input.device,
                 )
             else:
                 noise = torch.randn_like(model_input)
             bsz, channels, height, width = model_input.shape
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bsz,), device=model_input.device
+                0,
+                noise_scheduler.config.num_train_timesteps,
+                (bsz,),
+                device=model_input.device,
             )
             timesteps = timesteps.long()
 
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_model_input = noise_scheduler.add_noise(
-                model_input, noise, timesteps)
+            noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
 
             # timestep is not used, but should we?
             if args.backbone_config == "pretrain_dino":
@@ -669,35 +720,46 @@ def main(args):
             if not train_unet:
                 slots = slots.to(dtype=weight_dtype)
 
-            noisy_model_input = noisy_model_input[:, None, :].expand(-1, slots.shape[1], -1, -1, -1)
+            noisy_model_input = noisy_model_input[:, None, :].expand(
+                -1, slots.shape[1], -1, -1, -1
+            )
             timesteps = timesteps[:, None].expand(-1, slots.shape[1])
 
             noisy_model_input = torch.flatten(noisy_model_input, 0, 1)
             timesteps = torch.flatten(timesteps, 0, 1)
             slots = torch.flatten(slots, 0, 1)
 
-            #model_pred = torch.zeros_like(noisy_model_input)
+            # model_pred = torch.zeros_like(noisy_model_input)
             # Predict the noise residual
-            #for i in range(slots.shape[1]):
-                #model_pred = model_pred + unet(noisy_model_input, timesteps, slots[:,i,:].unsqueeze(1),).sample
-            model_pred = unet(noisy_model_input, timesteps, slots.unsqueeze(1),).sample
+            # for i in range(slots.shape[1]):
+            # model_pred = model_pred + unet(noisy_model_input, timesteps, slots[:,i,:].unsqueeze(1),).sample
+            model_pred = unet(
+                noisy_model_input,
+                timesteps,
+                slots.unsqueeze(1),
+            ).sample
 
-            model_pred = model_pred.view(pixel_values.shape[0], -1, noisy_model_input.shape[1], noisy_model_input.shape[2], noisy_model_input.shape[3]).mean(dim=1)
+            model_pred = model_pred.view(
+                pixel_values.shape[0],
+                -1,
+                noisy_model_input.shape[1],
+                noisy_model_input.shape[2],
+                noisy_model_input.shape[3],
+            ).mean(dim=1)
 
             # Get the target for loss depending on the prediction type
             if noise_scheduler.config.prediction_type == "epsilon":
                 target = noise
             elif noise_scheduler.config.prediction_type == "v_prediction":
-                target = noise_scheduler.get_velocity(
-                    model_input, noise, timesteps)
+                target = noise_scheduler.get_velocity(model_input, noise, timesteps)
             else:
                 raise ValueError(
-                    f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                    f"Unknown prediction type {noise_scheduler.config.prediction_type}"
+                )
 
             # Compute instance loss
             if args.snr_gamma is None:
-                loss = F.mse_loss(model_pred.float(),
-                                  target.float(), reduction="mean")
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
             else:
                 # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                 # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -705,7 +767,9 @@ def main(args):
                 snr = compute_snr(noise_scheduler, timesteps)
                 base_weight = (
                     torch.stack(
-                        [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                        [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
+                    ).min(dim=1)[0]
+                    / snr
                 )
 
                 if noise_scheduler.config.prediction_type == "v_prediction":
@@ -714,10 +778,8 @@ def main(args):
                 else:
                     # Epsilon and sample both use the same loss weights.
                     mse_loss_weights = base_weight
-                loss = F.mse_loss(model_pred.float(),
-                                  target.float(), reduction="none")
-                loss = loss.mean(
-                    dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+                loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                 loss = loss.mean()
 
             loss = loss / args.gradient_accumulation_steps
@@ -729,16 +791,15 @@ def main(args):
             accelerator.backward(loss)
             accumulate_steps += 1
             # if accelerator.sync_gradients:
-            if (accumulate_steps+1) % args.gradient_accumulation_steps == 0:
+            if (accumulate_steps + 1) % args.gradient_accumulation_steps == 0:
                 params_to_clip = params_to_optimize
-                accelerator.clip_grad_norm_(
-                    params_to_clip, args.max_grad_norm)
+                accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
-            if (accumulate_steps+1) % args.gradient_accumulation_steps == 0:
+            if (accumulate_steps + 1) % args.gradient_accumulation_steps == 0:
                 progress_bar.update(1)
                 global_step += 1
 
@@ -748,29 +809,35 @@ def main(args):
                         if args.checkpoints_total_limit is not None:
                             checkpoints = os.listdir(args.output_dir)
                             checkpoints = [
-                                d for d in checkpoints if d.startswith("checkpoint")]
+                                d for d in checkpoints if d.startswith("checkpoint")
+                            ]
                             checkpoints = sorted(
-                                checkpoints, key=lambda x: int(x.split("-")[1]))
+                                checkpoints, key=lambda x: int(x.split("-")[1])
+                            )
 
                             # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
                             if len(checkpoints) >= args.checkpoints_total_limit:
-                                num_to_remove = len(
-                                    checkpoints) - args.checkpoints_total_limit + 1
+                                num_to_remove = (
+                                    len(checkpoints) - args.checkpoints_total_limit + 1
+                                )
                                 removing_checkpoints = checkpoints[0:num_to_remove]
 
                                 logger.info(
                                     f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
                                 )
                                 logger.info(
-                                    f"removing checkpoints: {', '.join(removing_checkpoints)}")
+                                    f"removing checkpoints: {', '.join(removing_checkpoints)}"
+                                )
 
                                 for removing_checkpoint in removing_checkpoints:
                                     removing_checkpoint = os.path.join(
-                                        args.output_dir, removing_checkpoint)
+                                        args.output_dir, removing_checkpoint
+                                    )
                                     shutil.rmtree(removing_checkpoint)
 
                         save_path = os.path.join(
-                            args.output_dir, f"checkpoint-{global_step}")
+                            args.output_dir, f"checkpoint-{global_step}"
+                        )
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
@@ -790,8 +857,7 @@ def main(args):
                             global_step=global_step,
                         )
 
-            logs = {"loss": loss.detach().item(
-            ), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -801,8 +867,7 @@ def main(args):
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        save_path = os.path.join(
-            args.output_dir, f"checkpoint-{global_step}-last")
+        save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}-last")
         accelerator.save_state(save_path)
         logger.info(f"Saved state to {save_path}")
 
