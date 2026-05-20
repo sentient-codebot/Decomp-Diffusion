@@ -137,56 +137,21 @@ def log_validation(
                 feat = backbone(pixel_values)
             slots = latent_encoder(pixel_values)  # for the time dimension
 
-            images_gen_0 = pipeline(
-                prompt_embeds=slots[:, 0, :]
-                .unsqueeze(1)
-                .to(device=accelerator.device, dtype=weight_dtype),
-                height=args.resolution,
-                width=args.resolution,
-                num_inference_steps=25,
-                generator=generator,
-                guidance_scale=1.0,
-                output_type="pt",
-            ).images
-
-            images_gen_1 = pipeline(
-                prompt_embeds=slots[:, 1, :]
-                .unsqueeze(1)
-                .type(slots.dtype)
-                .to(slots.device),
-                height=args.resolution,
-                width=args.resolution,
-                num_inference_steps=25,
-                generator=generator,
-                guidance_scale=1.0,
-                output_type="pt",
-            ).images
-
-            images_gen_2 = pipeline(
-                prompt_embeds=slots[:, 2, :]
-                .unsqueeze(1)
-                .type(slots.dtype)
-                .to(slots.device),
-                height=args.resolution,
-                width=args.resolution,
-                num_inference_steps=25,
-                generator=generator,
-                guidance_scale=1.0,
-                output_type="pt",
-            ).images
-
-            images_gen_3 = pipeline(
-                prompt_embeds=slots[:, 3, :]
-                .unsqueeze(1)
-                .type(slots.dtype)
-                .to(slots.device),
-                height=args.resolution,
-                width=args.resolution,
-                num_inference_steps=25,
-                generator=generator,
-                guidance_scale=1.0,
-                output_type="pt",
-            ).images
+            # one generation per slot, then the full reconstruction from all slots
+            per_slot_images = [
+                pipeline(
+                    prompt_embeds=slots[:, s, :]
+                    .unsqueeze(1)
+                    .to(device=accelerator.device, dtype=weight_dtype),
+                    height=args.resolution,
+                    width=args.resolution,
+                    num_inference_steps=25,
+                    generator=generator,
+                    guidance_scale=1.0,
+                    output_type="pt",
+                ).images
+                for s in range(slots.shape[1])
+            ]
 
             images_recon = pipeline(
                 prompt_embeds=slots,
@@ -199,14 +164,9 @@ def log_validation(
             ).images
 
         grid_image = torch.cat(
-            [
-                pixel_values.unsqueeze(1) * 0.5 + 0.5,
-                images_gen_0.unsqueeze(1),
-                images_gen_1.unsqueeze(1),
-                images_gen_2.unsqueeze(1),
-                images_gen_3.unsqueeze(1),
-                images_recon.unsqueeze(1),
-            ],
+            [pixel_values.unsqueeze(1) * 0.5 + 0.5]
+            + [img.unsqueeze(1) for img in per_slot_images]
+            + [images_recon.unsqueeze(1)],
             dim=1,
         )
         grid_image = make_grid(
@@ -338,7 +298,7 @@ def main(args):
 
         backbone = DINOBackbone(dinov2)
     else:
-        raise ValueError(f"Unknown unet config {args.unet_config}")
+        raise ValueError(f"Unknown backbone config {args.backbone_config}")
 
     latent_encoder_config = LatentEncoder.load_config(args.latent_encoder_config)
     latent_encoder = LatentEncoder.from_config(latent_encoder_config)
