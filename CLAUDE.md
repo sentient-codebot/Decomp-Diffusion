@@ -27,11 +27,23 @@ Optional extras:
 - `configs/celebahq/` — celebahq model component jsons (backbone, encoder, unet, scheduler) + `train_config.yaml` training hyperparameters
 - `scripts/environment.sh` — uv bootstrap
 - `scripts/data_preprocess/` — MOVi/Kubric preprocessing (requires `preprocess` extra)
+- `jobs/` — Slurm sbatch job scripts
+- `docs/` — experiment result reports (markdown)
 
 ## Conventions
 
 - **Commits:** see `CONTRIBUTING.md` — `<type>(<scope>): <description>`, lowercase, imperative, no trailing period, <60 chars. Types: `feat`, `fix`, `exp`, `refactor`, `build`, `chore`, `perf`, `docs`, `test`.
 - **Lint/format:** `ruff.toml` configures ruff. Run via `uvx ruff check` and `uvx ruff format` (ruff is not a project dep).
+
+## Project tracking
+
+- `ROADMAP.md` — longer-term direction: bigger changes, methodological shifts, planned architecture work. Keep it current when project goals change.
+- `TECHDEBT.md` — known shortcuts, divergences, and deferred fixes. Add an entry when you discover or introduce debt; remove it when resolved.
+
+## Jobs and experiment reports
+
+- **Slurm jobs:** write sbatch job scripts under `jobs/`. (Distinct from `scripts/<experiment>/` launch wrappers, which hold only run/machine-specific paths.)
+- **Experiment results:** write up results as markdown reports under `docs/`. Name reports for long-term maintenance, not one-offs: `docs/experiments/YYYY-MM-DD-<dataset>-<topic>.md` (date prefix sorts chronologically; `<dataset>` and `<topic>` keep them scannable, e.g. `2026-05-20-celebahq-slot-count-sweep.md`).
 
 ## Reproducibility notes
 
