@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 .python-version
+image_test_output
+data
+log/
+logs/
+wandb/

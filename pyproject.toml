@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=1.24,<2.0",
     "packaging>=23",
     "pillow>=9.3",
+    "pyyaml>=6.0",
     "torch>=2.5,<2.7",
     "torchvision>=0.20,<0.22",
     "tqdm>=4.66",
@@ -36,6 +37,12 @@ preprocess = [
 
 [tool.uv]
 package = false
+# .venv lives on home5; the uv cache resolves to scratch (different GPFS
+# filesystem), so hardlinks can't span them and uv would otherwise copy
+# every wheel into .venv (~5 GB against the home quota). Symlink mode points
+# .venv files at the cache instead. Caveat: `uv cache prune`/`clean` or a
+# scratch purge will dangle these symlinks — rerun `uv sync` to rebuild.
+link-mode = "symlink"
 
 [[tool.uv.index]]
 name = "pytorch-cu124"

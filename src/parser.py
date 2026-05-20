@@ -1,9 +1,28 @@
 import argparse
 import os
 
+import yaml
+
 
 def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    # `--train_config` is resolved first by a bare parser so its YAML contents
+    # can be folded in as defaults before the full command line is parsed.
+    # Sharing it via `parents=` keeps it visible in `--help`.
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument(
+        "--train_config",
+        type=str,
+        default=None,
+        help=(
+            "Path to a YAML file of training hyperparameters. Its values act as "
+            "defaults; any flag passed on the command line overrides them."
+        ),
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Simple example of a training script.",
+        parents=[config_parser],
+    )
     parser.add_argument(
         "--pretrained_model_name",
         type=str,
@@ -265,7 +284,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="latent_slot_diffusion",
+        default="latent_decomposed_diffusion",
         help="The name of the tracker project to use for logging.",
     )
     parser.add_argument(
@@ -334,10 +353,21 @@ def parse_args(input_args=None):
         help="Input resolution for the ViT. Attention resolution will be 1/14 of this value (with vit14).",
     )
 
-    if input_args is not None:
-        args = parser.parse_args(input_args)
-    else:
-        args = parser.parse_args()
+    # Fold the YAML hyperparameter file in as argparse defaults so that any
+    # value also given on the command line still takes precedence.
+    cfg_args, _ = config_parser.parse_known_args(input_args)
+    if cfg_args.train_config is not None:
+        with open(cfg_args.train_config) as f:
+            config = yaml.safe_load(f) or {}
+        valid_keys = {action.dest for action in parser._actions}
+        unknown = set(config) - valid_keys
+        if unknown:
+            raise ValueError(
+                f"Unknown keys in {cfg_args.train_config}: {sorted(unknown)}"
+            )
+        parser.set_defaults(**config)
+
+    args = parser.parse_args(input_args)
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
