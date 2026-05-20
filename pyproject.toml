@@ -1,0 +1,47 @@
+[project]
+name = "decomp-diffusion"
+version = "0.1.0"
+description = "Decomp-Diffusion: Latent Slot Diffusion with decomposed representations"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "accelerate>=0.23,<2.0",
+    # 0.27 is the minimum needed by src/pipeline (uses FusedAttnProcessor2_0);
+    # capped <0.32 to stay close to the originally tested 0.25.1 line.
+    "diffusers>=0.27,<0.32",
+    "distinctipy>=1.2",
+    "einops>=0.7",
+    "huggingface-hub>=0.20",
+    "matplotlib>=3.8",
+    "numpy>=1.24,<2.0",
+    "packaging>=23",
+    "pillow>=9.3",
+    "torch>=2.5,<2.7",
+    "torchvision>=0.20,<0.22",
+    "tqdm>=4.66",
+    # cap <5 to keep the transformers v4 API the code was written against.
+    "transformers>=4.34,<5.0",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb>=0.16"]
+tensorboard = ["tensorboard>=2.14"]
+xformers = ["xformers>=0.0.28"]
+# For scripts/data_preprocess/movi_kubric_dump_with_labels.py only.
+preprocess = [
+    "tensorflow>=2.14",
+    "tensorflow-datasets>=4.9",
+    "gcsfs>=2024.0",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]

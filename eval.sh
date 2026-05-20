@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 eval.py \
+CUDA_VISIBLE_DEVICES=0 uv run accelerate launch --num_processes=1 eval.py \
 --mixed_precision fp16 \
 --seed 42 \
 --batch_size 32 --num_validation_images 32 \
