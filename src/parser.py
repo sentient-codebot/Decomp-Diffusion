@@ -290,13 +290,6 @@ def parse_args(input_args=None):
         help="The name of the tracker project to use for logging.",
     )
     parser.add_argument(
-        "--backbone_config",
-        type=str,
-        default=None,
-        help="Path to a config file for the backbone or pretrain_dino.",
-        required=True,
-    )
-    parser.add_argument(
         "--latent_encoder_config",
         type=str,
         default=None,
@@ -348,13 +341,6 @@ def parse_args(input_args=None):
         default=0.9,
         help="Portion of the dataset to use for training.",
     )
-    parser.add_argument(
-        "--vit_input_resolution",
-        type=int,
-        default=448,
-        help="Input resolution for the ViT. Attention resolution will be 1/14 of this value (with vit14).",
-    )
-
     # Fold the YAML hyperparameter file in as argparse defaults so that any
     # value also given on the command line still takes precedence.
     cfg_args, _ = config_parser.parse_known_args(input_args)

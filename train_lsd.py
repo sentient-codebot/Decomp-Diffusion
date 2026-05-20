@@ -24,7 +24,6 @@ from diffusers import (
 # from diffusers.training_utils import compute_snr # diffusers is still working on this, uncomment in future versions
 from diffusers.utils import is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from einops import rearrange
 from huggingface_hub import create_repo
 from packaging import version
 from PIL import Image
@@ -32,7 +31,6 @@ from torchvision.utils import make_grid
 from tqdm.auto import tqdm
 
 from src.data.dataset import GlobDataset
-from src.models.backbone import UNetEncoder
 from src.models.encoder import LatentEncoder
 from src.parser import parse_args
 from src.pipeline.composable_stable_diffusion_pipeline import (
@@ -49,7 +47,6 @@ logger = get_logger(__name__)
 @torch.no_grad()
 def log_validation(
     val_dataset,
-    backbone,
     latent_encoder,
     unet,
     vae,
@@ -61,7 +58,6 @@ def log_validation(
 ):
     logger.info("Running validation... \n.")
     unet = accelerator.unwrap_model(unet)
-    backbone = accelerator.unwrap_model(backbone)
     latent_encoder = accelerator.unwrap_model(latent_encoder)
 
     val_dataloader = torch.utils.data.DataLoader(
@@ -128,13 +124,6 @@ def log_validation(
             model_input = vae.encode(pixel_values).latent_dist.sample()
             pixel_values_recon = vae.decode(model_input).sample
 
-            if args.backbone_config == "pretrain_dino":
-                pixel_values_vit = batch["pixel_values_vit"].to(
-                    device=accelerator.device, dtype=weight_dtype
-                )
-                feat = backbone(pixel_values_vit)
-            else:
-                feat = backbone(pixel_values)
             slots = latent_encoder(pixel_values)  # for the time dimension
 
             # one generation per slot, then the full reconstruction from all slots
@@ -275,31 +264,6 @@ def main(args):
 
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name, subfolder="vae")
 
-    if os.path.exists(args.backbone_config):
-        train_backbone = True
-        backbone_config = UNetEncoder.load_config(args.backbone_config)
-        backbone = UNetEncoder.from_config(backbone_config)
-    elif args.backbone_config == "pretrain_dino":
-        train_backbone = False
-        dinov2 = torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14")
-
-        class DINOBackbone(torch.nn.Module):
-            def __init__(self, dinov2):
-                super().__init__()
-                self.dinov2 = dinov2
-
-            def forward(self, x):
-                enc_out = self.dinov2.forward_features(x)
-                return rearrange(
-                    enc_out["x_norm_patchtokens"],
-                    "b (h w ) c -> b c h w",
-                    h=int(np.sqrt(enc_out["x_norm_patchtokens"].shape[-2])),
-                )
-
-        backbone = DINOBackbone(dinov2)
-    else:
-        raise ValueError(f"Unknown backbone config {args.backbone_config}")
-
     latent_encoder_config = LatentEncoder.load_config(args.latent_encoder_config)
     latent_encoder = LatentEncoder.from_config(latent_encoder_config)
 
@@ -320,10 +284,8 @@ def main(args):
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             for model in models:
-                # continue if not one of [UNetEncoder, MultiHeadSTEVESA, UNet2DConditionModelWithPos]
-                if not isinstance(
-                    model, (UNetEncoder, LatentEncoder, UNet2DConditionModel)
-                ):
+                # continue if not one of [LatentEncoder, UNet2DConditionModel]
+                if not isinstance(model, (LatentEncoder, UNet2DConditionModel)):
                     continue
 
                 sub_dir = model._get_name().lower()
@@ -340,11 +302,7 @@ def main(args):
 
             sub_dir = model._get_name().lower()
 
-            if isinstance(model, UNetEncoder):
-                # load diffusers style into model
-                load_model = UNetEncoder.from_pretrained(input_dir, subfolder=sub_dir)
-                model.register_to_config(**load_model.config)
-            elif isinstance(model, LatentEncoder):
+            if isinstance(model, LatentEncoder):
                 load_model = LatentEncoder.from_pretrained(input_dir, subfolder=sub_dir)
                 model.register_to_config(**load_model.config)
             elif isinstance(model, UNet2DConditionModel):
@@ -362,11 +320,6 @@ def main(args):
     accelerator.register_load_state_pre_hook(load_model_hook)
 
     vae.requires_grad_(False)
-    if not train_backbone:
-        try:
-            backbone.requires_grad_(False)
-        except:
-            pass
     if not train_unet:
         unet.requires_grad_(False)
 
@@ -380,10 +333,6 @@ def main(args):
                     "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
                 )
             unet.enable_xformers_memory_efficient_attention()
-            try:
-                backbone.enable_xformers_memory_efficient_attention()
-            except AttributeError:
-                pass
         else:
             raise ValueError(
                 "xformers is not available. Make sure it is installed correctly"
@@ -391,10 +340,6 @@ def main(args):
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
-        try:
-            backbone.enable_gradient_checkpointing()
-        except AttributeError:
-            pass
 
     # Check that all trainable models are in full precision
     low_precision_error_string = (
@@ -405,11 +350,6 @@ def main(args):
     if train_unet and accelerator.unwrap_model(unet).dtype != torch.float32:
         raise ValueError(
             f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
-        )
-
-    if train_backbone and accelerator.unwrap_model(backbone).dtype != torch.float32:
-        raise ValueError(
-            f"Backbone loaded as datatype {accelerator.unwrap_model(backbone).dtype}. {low_precision_error_string}"
         )
 
     if accelerator.unwrap_model(latent_encoder).dtype != torch.float32:
@@ -443,15 +383,12 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    params_to_optimize = (
-        list(latent_encoder.parameters())
-        + (list(backbone.parameters()) if train_backbone else [])
-        + (list(unet.parameters()) if train_unet else [])
+    params_to_optimize = list(latent_encoder.parameters()) + (
+        list(unet.parameters()) if train_unet else []
     )
     params_group = [
         {
-            "params": list(latent_encoder.parameters())
-            + (list(backbone.parameters()) if train_backbone else []),
+            "params": list(latent_encoder.parameters()),
             "lr": args.learning_rate * args.encoder_lr_scale,
         }
     ]
@@ -491,9 +428,7 @@ def main(args):
         img_size=args.resolution,
         img_glob=args.dataset_glob,
         data_portion=(0.0, args.train_split_portion),
-        vit_norm=args.backbone_config == "pretrain_dino",
         random_flip=args.flip_images,
-        vit_input_resolution=args.vit_input_resolution,
     )
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -512,8 +447,6 @@ def main(args):
             args.train_split_portion if args.train_split_portion < 1.0 else 0.9,
             1.0,
         ),
-        vit_norm=args.backbone_config == "pretrain_dino",
-        vit_input_resolution=args.vit_input_resolution,
     )
 
     # Scheduler and math around the number of training steps.
@@ -530,8 +463,6 @@ def main(args):
         latent_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
-    if train_backbone:
-        backbone = accelerator.prepare(backbone)
     if train_unet:
         unet = accelerator.prepare(unet)
 
@@ -545,11 +476,6 @@ def main(args):
 
     # Move vae device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
-    if not train_backbone:
-        try:
-            backbone.to(accelerator.device, dtype=weight_dtype)
-        except:
-            pass
     if not train_unet:
         unet.to(accelerator.device, dtype=weight_dtype)
 
@@ -633,8 +559,6 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         if train_unet:
             unet.train()
-        if train_backbone:
-            backbone.train()
         latent_encoder.train()
         for step, batch in enumerate(train_dataloader):
             pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
@@ -667,13 +591,6 @@ def main(args):
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
-
-            # timestep is not used, but should we?
-            if args.backbone_config == "pretrain_dino":
-                pixel_values_vit = batch["pixel_values_vit"].to(dtype=weight_dtype)
-                feat = backbone(pixel_values_vit)
-            else:
-                feat = backbone(pixel_values)
 
             slots = latent_encoder(pixel_values)  # for the time dimension
 
@@ -806,7 +723,6 @@ def main(args):
                     if global_step % args.validation_steps == 0:
                         images = log_validation(
                             val_dataset=val_dataset,
-                            backbone=backbone,
                             latent_encoder=latent_encoder,
                             unet=unet,
                             vae=vae,

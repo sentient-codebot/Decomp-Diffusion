@@ -108,16 +108,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--vit_input_resolution",
-    type=int,
-    default=448,
-    help=(
-        "The resolution for input images, all the images in the train/validation dataset will be resized to this"
-        " resolution"
-    ),
-)
-
-parser.add_argument(
     "--resolution",
     type=int,
     default=256,
@@ -188,8 +178,6 @@ def main(args):
         img_size=args.resolution,
         img_glob=args.dataset_glob,
         data_portion=(0.0, 1.0),
-        vit_norm=False,
-        vit_input_resolution=448,
     )
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,

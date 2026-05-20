@@ -20,7 +20,7 @@ Optional extras:
 - `train_lsd.py` — training entrypoint, launched via `accelerate launch`
 - `scripts/celebahq/train.sh` — training launch wrapper (run/machine-specific paths only)
 - `eval.py` / `eval.sh` — evaluation entrypoint
-- `src/models/` — backbone, latent encoder, UNet variants, ColorMask viz utils
+- `src/models/` — latent encoder, UNet variants, ColorMask viz utils
 - `src/pipeline/composable_stable_diffusion_pipeline.py` — custom diffusion pipeline
 - `src/data/dataset.py` — `GlobDataset`
 - `src/parser.py` — shared argparse for train + eval

@@ -52,7 +52,6 @@ Equivalently, spelled out:
 CUDA_VISIBLE_DEVICES=0,1 uv run accelerate launch --multi_gpu --num_processes=2 --main_process_port 29500 train_lsd.py \
 --train_config configs/celebahq/train_config.yaml \
 --output_dir results/celebahq/ \
---backbone_config configs/celebahq/backbone/config.json \
 --latent_encoder_config configs/celebahq/latent_encoder/config.json \
 --unet_config configs/celebahq/unet/config.json \
 --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
