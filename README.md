@@ -18,7 +18,25 @@ Available optional extras:
 
 Prefix any command with `uv run` to execute it inside the project venv (e.g. `uv run python ...`, `uv run accelerate launch ...`).
 
-# 2. train the model
+# 2. prepare the dataset
+
+`scripts/celebahq/train.sh` trains on **CelebA-HQ** at 128×128. It expects
+`.jpg` images under `data/celebahq_data128x128/` (matched recursively by the
+`**/*.jpg` glob); `data/` is typically a symlink to wherever the dataset lives.
+
+- Only the image files are needed — `GlobDataset` reads pixels only, no labels
+  or masks.
+- Images need not be pre-resized: the dataset transform resizes the shortest
+  side to `resolution` (128) and center-crops. Pre-resizing only saves I/O.
+- There is no separate validation set to prepare. `train_split_portion: 0.9`
+  in `train_config.yaml` splits the single glob — first 90% (shuffled with a
+  fixed seed) for training, last 10% for validation.
+
+The standard CelebA-HQ release is 30,000 images at 1024×1024; download it and
+point `--dataset_root` / `--dataset_glob` at the images (downscaling to 128 is
+optional). To train on a different dataset, override those two flags.
+
+# 3. train the model
 
 Training hyperparameters live in a YAML config (`configs/celebahq/train_config.yaml`);
 the launch command itself only carries run/machine-specific paths. The provided
@@ -38,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0,1 uv run accelerate launch --multi_gpu --num_processes=2 
 --latent_encoder_config configs/celebahq/latent_encoder/config.json \
 --unet_config configs/celebahq/unet/config.json \
 --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
---dataset_root /space/ywang86/celebahq_data128x128/ --dataset_glob '**/*.jpg'
+--dataset_root data/celebahq_data128x128/ --dataset_glob '**/*.jpg'
 ```
 
 Any hyperparameter in the YAML can be overridden on the command line, e.g.
