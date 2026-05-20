@@ -26,7 +26,9 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--pretrained_model_name",
         type=str,
-        default="stabilityai/stable-diffusion-2-1",
+        # Community mirror of stable-diffusion-2-1: stabilityai deprecated the
+        # original repo, but the mirror carries the identical VAE weights.
+        default="sd2-community/stable-diffusion-2-1",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
