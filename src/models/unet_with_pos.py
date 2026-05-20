@@ -6,13 +6,13 @@ if __name__ == "__main__":
     sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
 import torch
-from diffusers.models.unet_2d_blocks import (
+from diffusers.models.unets.unet_2d_blocks import (
     CrossAttnDownBlock2D,
     CrossAttnUpBlock2D,
     UNetMidBlock2DCrossAttn,
     UNetMidBlock2DSimpleCrossAttn,
 )
-from diffusers.models.unet_2d_condition import UNet2DConditionModel
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from einops.layers.torch import Rearrange
 from torch import nn
 
