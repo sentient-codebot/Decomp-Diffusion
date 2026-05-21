@@ -116,7 +116,7 @@ try:
     target = os.path.join(run_dir, "latent_decomposed_diffusion")
     runs = list(
         api.runs(
-            "latent_decomposed_diffusion",
+            "nan-team/latent_decomposed_diffusion",
             filters={"config.output_dir": target},
         )
     )
