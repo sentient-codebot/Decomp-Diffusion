@@ -18,14 +18,44 @@ This validation is the prerequisite for the slot-extraction work below — it es
 - 2026-05-20 — reduced 50k-step end-to-end validation (pipeline check, not yet the full 500k run). Slurm jobs 22966115 (train, 2x H100) + 22974706 (eval); scripts `jobs/celebahq_train_eval_validation.sh` + `jobs/celebahq_eval_validation.sh`; checkpoint at `results/celebahq_validation/latent_decomposed_diffusion/checkpoint-50000-last`. Result: train + eval pipelines run cleanly — report `docs/experiments/2026-05-20-celebahq-train-eval-validation.md`. Still open: the full 500k-step run and the baseline-soundness decision.
 - 2026-05-20 — full 500k-step run launched. Slurm job 22976095 (train+eval, 2x H100); script `jobs/celebahq_train_eval_full.sh`; output `results/celebahq/latent_decomposed_diffusion/`; report (on completion) `docs/experiments/2026-05-20-celebahq-full-500k-run.md`. ~25h compute. This is the run the soundness decision will be made from.
 
-## Slot extraction: encoder + slot attention
+## Slot extraction: slot attention
 
-**Goal:** move slot extraction to a **(trained or pretrained) encoder — e.g. DINO — followed by a slot attention module**. This is the intended object-centric design and the canonical Latent Slot Diffusion pattern: encoder → feature map → slot attention → slots.
+**Goal:** move slot extraction to a proper **slot attention module**. This is
+the canonical Latent Slot Diffusion pattern: encoder → feature map → slot
+attention → slots.
 
-**Current state:** the `LatentEncoder` (`src/models/encoder.py`) is a plain CNN + `Flatten` + `Linear` mapping raw pixels → K slot vectors, with **no slot attention**. It is kept deliberately as:
-- a temporary solution to confirm the end-to-end training/eval setup works, and
-- a naive baseline to compare the future encoder + slot-attention version against.
+**Done:** `SlotAttentionEncoder` (`src/models/encoder.py`, `src/models/slot_attn.py`)
+keeps the convolutional feature extractor of `LatentEncoder` (image → feature
+map) but replaces its `Flatten` + `Linear` slot read-out with a soft positional
+embedding + an iterative Slot Attention module (Locatello et al., 2020). It is
+added as a *selectable alternative*: the encoder class is chosen by the
+`_class_name` field of the latent-encoder config json (`build_latent_encoder`
+in `src/models/encoder.py`), so `LatentEncoder` stays available as the naive
+baseline. Config: `configs/celebahq/slot_encoder/config.json`.
 
-So the current encoder is **not** debt to rip out — it is an intentional placeholder/baseline.
+The earlier `UNetEncoder` backbone (removed in 178578b, recoverable from git
+history) was scaffolding toward a swappable encoder but had no slot-attention
+downstream — this design supersedes it.
 
-**How to land it:** add the new slot encoder as a *selectable alternative* (pretrained encoder, e.g. DINO, + a `SlotAttention` module) rather than replacing `LatentEncoder` outright; keep `LatentEncoder` available as the baseline. The earlier `UNetEncoder` backbone (removed in 178578b, recoverable from git history) was scaffolding toward a swappable encoder but had no slot-attention downstream — the new design supersedes it.
+**Runs:**
+- 2026-05-21 — full 500k-step run, `SlotAttentionEncoder`. Slurm job <pending>
+  (train+eval, 4x H100); script `jobs/celebahq_slot_attn_train_eval.sh`; output
+  `results/celebahq_slot/latent_decomposed_diffusion/`; report
+  `docs/experiments/2026-05-21-celebahq-slot-attention-encoder.md`. Effective
+  batch, step count, LR, UNet and scheduler match the LatentEncoder baseline run
+  (results/celebahq) so only the encoder differs.
+
+## Encoder: pretrained feature extractor
+
+**Goal:** replace the trained-from-scratch convolutional feature extractor
+(image → feature map) in `SlotAttentionEncoder` with a **pretrained encoder,
+e.g. DINO**. Slot Attention then binds the pretrained feature map into slots.
+A frozen (or lightly fine-tuned) self-supervised backbone gives much stronger
+per-patch features than a CNN trained only through the diffusion loss, which
+is expected to improve decomposition quality and convergence speed.
+
+**How to land it:** add the pretrained backbone as another selectable encoder
+(same `_class_name`-dispatched factory), keeping the CNN-based
+`SlotAttentionEncoder` as the comparison point. Only the feature-extractor
+front end changes; the soft positional embedding + Slot Attention read-out
+stay as they are.
