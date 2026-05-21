@@ -19,7 +19,7 @@ from PIL import Image
 from torchvision.utils import make_grid
 
 from src.data.dataset import GlobDataset
-from src.models.encoder import LatentEncoder
+from src.models.encoder import load_latent_encoder
 from src.pipeline.composable_stable_diffusion_pipeline import (
     ComposableStableDiffusionPipeline,
 )
@@ -166,11 +166,11 @@ def main(args):
     )
     unet = unet.to(device=accelerator.device, dtype=weight_dtype)
     print("loaded a trained unet2dconditionmodel")
-    latent_encoder = LatentEncoder.from_pretrained(
-        args.ckpt_path, subfolder="LatentEncoder".lower()
-    )
+    # Detects the encoder type (LatentEncoder vs SlotAttentionEncoder) from the
+    # checkpoint subfolder, so eval works for either training run.
+    latent_encoder = load_latent_encoder(args.ckpt_path)
     latent_encoder = latent_encoder.to(device=accelerator.device, dtype=weight_dtype)
-    print("loaded a trained latent encoder")
+    print(f"loaded a trained {type(latent_encoder).__name__}")
 
     # prepare validation data
     val_dataset = GlobDataset(

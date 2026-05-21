@@ -1,0 +1,12 @@
+{
+  "_class_name": "SlotAttentionEncoder",
+  "_diffusers_version": "0.31.0",
+  "in_channels": 3,
+  "enc_channels": 128,
+  "num_components": 4,
+  "image_size": 128,
+  "latent_dim": 64,
+  "encode_depth": 3,
+  "slot_iters": 3,
+  "slot_hidden_dim": 128
+}

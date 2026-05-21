@@ -31,7 +31,10 @@ from torchvision.utils import make_grid
 from tqdm.auto import tqdm
 
 from src.data.dataset import GlobDataset
-from src.models.encoder import LatentEncoder
+from src.models.encoder import (
+    LATENT_ENCODER_CLASSES,
+    build_latent_encoder,
+)
 from src.parser import parse_args
 from src.pipeline.composable_stable_diffusion_pipeline import (
     ComposableStableDiffusionPipeline,
@@ -264,8 +267,9 @@ def main(args):
 
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name, subfolder="vae")
 
-    latent_encoder_config = LatentEncoder.load_config(args.latent_encoder_config)
-    latent_encoder = LatentEncoder.from_config(latent_encoder_config)
+    # The encoder class (LatentEncoder baseline vs SlotAttentionEncoder) is
+    # selected by the `_class_name` field of the latent-encoder config json.
+    latent_encoder = build_latent_encoder(args.latent_encoder_config)
 
     if os.path.exists(args.unet_config):
         train_unet = True
@@ -284,8 +288,10 @@ def main(args):
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             for model in models:
-                # continue if not one of [LatentEncoder, UNet2DConditionModel]
-                if not isinstance(model, (LatentEncoder, UNet2DConditionModel)):
+                # continue if not a latent encoder or the UNet
+                if not isinstance(
+                    model, LATENT_ENCODER_CLASSES + (UNet2DConditionModel,)
+                ):
                     continue
 
                 sub_dir = model._get_name().lower()
@@ -302,8 +308,8 @@ def main(args):
 
             sub_dir = model._get_name().lower()
 
-            if isinstance(model, LatentEncoder):
-                load_model = LatentEncoder.from_pretrained(input_dir, subfolder=sub_dir)
+            if isinstance(model, LATENT_ENCODER_CLASSES):
+                load_model = type(model).from_pretrained(input_dir, subfolder=sub_dir)
                 model.register_to_config(**load_model.config)
             elif isinstance(model, UNet2DConditionModel):
                 load_model = UNet2DConditionModel.from_pretrained(
