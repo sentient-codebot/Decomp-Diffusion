@@ -43,6 +43,8 @@ package = false
 # .venv files at the cache instead. Caveat: `uv cache prune`/`clean` or a
 # scratch purge will dangle these symlinks — rerun `uv sync` to rebuild.
 link-mode = "symlink"
+# tensorboard issue. relies on a deprecated feature of setuptools.
+constraint-dependencies = ["setuptools<81"]
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
