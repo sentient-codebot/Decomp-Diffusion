@@ -40,7 +40,7 @@ uv run accelerate launch --num_processes=1 --mixed_precision fp16 \
     --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
     --dataset_root data/celebahq_data128x128/ \
     --dataset_glob '**/*.jpg' \
-    --report_to tensorboard \
+    --report_to wandb \
     --train_batch_size 8 --val_batch_size 8 --num_validation_images 8 \
     --max_train_steps 12 --validation_steps 6 --checkpointing_steps 12
 TRAIN_RC=$?

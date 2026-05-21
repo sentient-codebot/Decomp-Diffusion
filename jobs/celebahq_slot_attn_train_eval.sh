@@ -56,7 +56,7 @@ uv run accelerate launch --multi_gpu --num_processes=4 --mixed_precision fp16 \
     --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
     --dataset_root data/celebahq_data128x128/ \
     --dataset_glob '**/*.jpg' \
-    --report_to tensorboard \
+    --report_to wandb \
     --train_batch_size 16 \
     --resume_from_checkpoint latest \
     --max_train_steps "$MAX_STEPS"
@@ -95,45 +95,60 @@ if [ -d image_test_output ]; then
     cp image_test_output/*.jpg "$RUN_DIR/eval_grids/" 2>/dev/null
 fi
 
-# --- 4. Loss curve from the tensorboard event file ---------------------------
+# --- 4. Loss curve + wandb run url -------------------------------------------
+# Metrics are logged to wandb (project: latent_decomposed_diffusion). Pull the
+# loss history back via the wandb API for a self-contained PNG; best-effort, so
+# a wandb/network hiccup never fails the run.
 LOSS_PNG="$RUN_DIR/loss_curve_${SLURM_JOB_ID}.png"
-uv run python - "$RUN_DIR" "$LOSS_PNG" <<'PYEOF'
-import glob, sys
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+WANDB_URL_FILE="$RUN_DIR/wandb_url.txt"
+uv run python - "$RUN_DIR" "$LOSS_PNG" "$WANDB_URL_FILE" <<'PYEOF'
+import os, sys
 
-run_dir, out_png = sys.argv[1], sys.argv[2]
-events = sorted(glob.glob(f"{run_dir}/**/events.out.tfevents.*", recursive=True))
-if not events:
-    print("[loss-curve] no tfevents file found -- skipping")
-    sys.exit(0)
-steps, vals = [], []
-for ev in events:
-    acc = EventAccumulator(ev)
-    acc.Reload()
-    if "loss" not in acc.Tags().get("scalars", []):
-        continue
-    for s in acc.Scalars("loss"):
-        steps.append(s.step)
-        vals.append(s.value)
-if not steps:
-    print("[loss-curve] no 'loss' scalar found -- skipping")
-    sys.exit(0)
-order = sorted(range(len(steps)), key=lambda i: steps[i])
-steps = [steps[i] for i in order]
-vals = [vals[i] for i in order]
-plt.figure(figsize=(8, 4))
-plt.plot(steps, vals, linewidth=0.7)
-plt.xlabel("step")
-plt.ylabel("train loss (MSE)")
-plt.title("SlotAttentionEncoder -- CelebA-HQ training loss")
-plt.grid(alpha=0.3)
-plt.tight_layout()
-plt.savefig(out_png, dpi=120)
-print(f"[loss-curve] wrote {out_png} ({len(steps)} points, final loss {vals[-1]:.4f})")
+run_dir, out_png, url_file = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import wandb
+
+    api = wandb.Api()
+    target = os.path.join(run_dir, "latent_decomposed_diffusion")
+    runs = list(
+        api.runs(
+            "latent_decomposed_diffusion",
+            filters={"config.output_dir": target},
+        )
+    )
+    if not runs:
+        print("[loss-curve] no matching wandb run found -- skipping")
+        sys.exit(0)
+    run = runs[0]  # most recent matching run
+    with open(url_file, "w") as f:
+        f.write(run.url + "\n")
+    print(f"[loss-curve] wandb run: {run.url}")
+    rows = run.history(keys=["loss"], samples=200000, pandas=False)
+    pts = sorted(
+        (r["_step"], r["loss"]) for r in rows if r.get("loss") is not None
+    )
+    if not pts:
+        print("[loss-curve] no 'loss' history -- skipping")
+        sys.exit(0)
+    steps = [p[0] for p in pts]
+    vals = [p[1] for p in pts]
+    plt.figure(figsize=(8, 4))
+    plt.plot(steps, vals, linewidth=0.7)
+    plt.xlabel("step")
+    plt.ylabel("train loss (MSE)")
+    plt.title("SlotAttentionEncoder -- CelebA-HQ training loss")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=120)
+    print(f"[loss-curve] wrote {out_png} ({len(steps)} points, final loss {vals[-1]:.4f})")
+except Exception as e:
+    print(f"[loss-curve] wandb pull failed: {e}")
 PYEOF
+WANDB_URL=$(cat "$WANDB_URL_FILE" 2>/dev/null || echo "N/A")
 
 # --- 5. Write the experiment report ------------------------------------------
 fmt_dur() { date -u -d "@$1" +%H:%M:%S; }
@@ -155,6 +170,7 @@ cat > "$REPORT" <<EOF
 **Date:** $(date -u +%Y-%m-%dT%H:%MZ)
 **Slurm job:** ${SLURM_JOB_ID:-N/A} (script: jobs/celebahq_slot_attn_train_eval.sh, log: slurm_${SLURM_JOB_ID}.log)
 **Node / GPUs:** ${SLURM_JOB_NODELIST:-N/A}, 4x H100
+**wandb run:** $WANDB_URL
 
 ## Purpose
 
@@ -199,7 +215,8 @@ encoder differs.
 - Eval slice: 100 images (glob 000*.jpg)
 - Eval grids: $RUN_DIR/eval_grids/image_NN.jpg -- each row is
   [input | slot 0 | slot 1 | slot 2 | slot 3 | reconstruction]
-- Training curves / per-step viz: $RUN_DIR/latent_decomposed_diffusion/logs/
+- Training curves / metrics: wandb run above (project latent_decomposed_diffusion)
+- Per-step validation viz: $RUN_DIR/latent_decomposed_diffusion/logs/
 
 ## Assessment
 
