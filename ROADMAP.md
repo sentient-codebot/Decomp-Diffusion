@@ -38,7 +38,7 @@ history) was scaffolding toward a swappable encoder but had no slot-attention
 downstream — this design supersedes it.
 
 **Runs:**
-- 2026-05-21 — full 500k-step run, `SlotAttentionEncoder`. Slurm job <pending>
+- 2026-05-21 — full 500k-step run, `SlotAttentionEncoder`. Slurm job 23006729
   (train+eval, 4x H100); script `jobs/celebahq_slot_attn_train_eval.sh`; output
   `results/celebahq_slot/latent_decomposed_diffusion/`; report
   `docs/experiments/2026-05-21-celebahq-slot-attention-encoder.md`. Effective
