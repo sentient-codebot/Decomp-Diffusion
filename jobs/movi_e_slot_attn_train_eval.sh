@@ -54,6 +54,21 @@ TRAIN_N=$(find "$TRAIN_IMG_ROOT" -name '*_image.png' | wc -l)
 VAL_N=$(find "$VAL_IMG_ROOT" -name '*_image.png' 2>/dev/null | wc -l)
 echo "[movi-e-run] train frames=$TRAIN_N  val frames=$VAL_N"
 
+# Prime GPFS metadata for the 234k-file dataset, so the per-rank glob.glob
+# inside GlobDataset doesn't race with cold metadata fetches across 4 ranks
+# (previous run timed out the first NCCL collective when one rank's glob took
+# >10 min). Find prints nothing -- only the metadata walk matters.
+echo "[movi-e-run] priming GPFS metadata..."
+find "$TRAIN_IMG_ROOT" "$VAL_IMG_ROOT" -type f >/dev/null
+echo "[movi-e-run] done priming."
+
+# Raise NCCL collective timeout: model + dataloader prep on this many files
+# is borderline against the 10-min default.
+export TORCH_NCCL_BLOCKING_WAIT=1
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
+export NCCL_TIMEOUT=1800
+
 START=$(date +%s)
 
 # --- 1. Train (DDP, 4 GPU -- no srun) ----------------------------------------
