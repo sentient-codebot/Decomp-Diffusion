@@ -218,12 +218,18 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
             hidden_dim=slot_hidden_dim,
         )
 
-    def forward(self, x):
+    def forward(self, x, return_attn=False):
         features = self.cnn(x)  # [B, C, h, w]
+        h, w = features.shape[-2:]
         features = features.permute(0, 2, 3, 1)  # [B, h, w, C]
         features = self.pos_embed(features)
         features = features.flatten(1, 2)  # [B, h*w, C]
         features = self.mlp(self.layer_norm(features))  # [B, h*w, latent_dim]
+        if return_attn:
+            slots, attn = self.slot_attention(features, return_attn=True)
+            # [B, K, N] -> [B, K, h, w] soft segmentation at feature map res.
+            attn = attn.reshape(attn.shape[0], attn.shape[1], h, w)
+            return slots, attn
         slots = self.slot_attention(features)  # [B, num_components, latent_dim]
         return slots
 

@@ -79,7 +79,7 @@ class SlotAttention(nn.Module):
         self.norm_slots = nn.LayerNorm(dim)
         self.norm_pre_ff = nn.LayerNorm(dim)
 
-    def forward(self, inputs, num_slots=None):
+    def forward(self, inputs, num_slots=None, return_attn=False):
         # inputs: [B, N, D]
         b, n, d = inputs.shape
         n_s = num_slots if num_slots is not None else self.num_slots
@@ -93,6 +93,7 @@ class SlotAttention(nn.Module):
         inputs = self.norm_input(inputs)
         k, v = self.to_k(inputs), self.to_v(inputs)
 
+        last_attn = None
         for _ in range(self.iters):
             slots_prev = slots
             slots = self.norm_slots(slots)
@@ -101,6 +102,9 @@ class SlotAttention(nn.Module):
             # Attention logits, softmax over the slot axis: slots compete.
             dots = torch.einsum("bid,bjd->bij", q, k) * self.scale
             attn = dots.softmax(dim=1) + self.eps
+            # The pre-renormalisation softmax is the per-token slot
+            # competition -- i.e. the soft segmentation mask.
+            last_attn = attn
             # Re-normalise over tokens -> per-slot weighted mean of values.
             attn = attn / attn.sum(dim=-1, keepdim=True)
             updates = torch.einsum("bjd,bij->bid", v, attn)
@@ -112,4 +116,7 @@ class SlotAttention(nn.Module):
             slots = slots.reshape(b, n_s, d)
             slots = slots + self.mlp(self.norm_pre_ff(slots))
 
+        if return_attn:
+            # [B, K, N] competition weights from the final iteration.
+            return slots, last_attn
         return slots
