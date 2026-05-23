@@ -1,0 +1,40 @@
+# Training hyperparameters for the MOVi-E experiment.
+#
+# Loaded by train_lsd.py via `--train_config`. Values here act as argparse
+# defaults; any flag passed on the `accelerate launch` command line overrides
+# them. Run/machine-specific paths (output_dir, dataset_root, dataset_glob and
+# the model component config paths) are intentionally NOT here -- pass those
+# on the command line (see jobs/movi_e_slot_attn_train_eval.sh).
+#
+# Mirrors configs/celebahq/train_config.yaml; differences from the celebahq
+# baseline are the shorter step budget (200k vs 500k) and the
+# 20k-step checkpoint cadence sized to that budget.
+
+# --- optimization ---
+learning_rate: 2.0e-5            # base LR; encoder LR = learning_rate * encoder_lr_scale
+encoder_lr_scale: 1.0
+gradient_accumulation_steps: 1
+max_train_steps: 200000
+seed: 42
+
+# --- data loading ---
+resolution: 128
+train_batch_size: 32
+train_split_portion: 1.0          # MOVi-E ships its own val/test splits; use the full train split
+dataloader_num_workers: 4
+
+# --- validation ---
+val_batch_size: 32
+num_validation_images: 32
+validation_steps: 5000
+
+# --- checkpointing ---
+checkpointing_steps: 20000
+checkpoints_total_limit: 2
+
+# --- runtime ---
+mixed_precision: fp16
+enable_xformers_memory_efficient_attention: true
+
+# --- logging ---
+tracker_project_name: latent_decomposed_diffusion
