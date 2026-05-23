@@ -54,6 +54,40 @@ downstream — this design supersedes it.
   storage (commits `ee295ed` on `feat/slot-attention-encoder` and
   `e02d149` on `main`).
 
+## Dataset: MOVi-e
+
+**Goal:** move past the single-image CelebA-HQ baseline and validate the
+slot-attention pipeline on a **multi-object synthetic benchmark with ground-truth
+segmentation** (Kubric MOVi-E). MOVi-E has up to 23 rigid objects per scene with
+per-pixel instance masks, so the decomposition can be measured with real
+object-centric metrics (FG-ARI, mBO) instead of only qualitative grids. This
+makes it the first run where "did the encoder actually find objects?" is
+answerable from numbers.
+
+**How to land it:**
+- Preprocess MOVi-E once into the same flat-PNG layout `GlobDataset` already
+  consumes (`movi-e-{train,validation,test}-with-label/images/<vid>/<frame>_image.png`,
+  segments + JSON labels alongside under `labels/`). The existing
+  `scripts/data_preprocess/movi_kubric_dump_with_labels.py` already produces
+  this layout; `data/movi-e/` will link into `~/prjs0993/datasets/movi-e/`.
+- Add `configs/movi-e/` mirroring `configs/celebahq/` (latent_encoder,
+  slot_encoder, unet, scheduler, train_config), with `num_components` raised
+  to match the higher object count (11 slots) and `train_config.yaml` set to
+  the 200k-step / 4x H100 budget.
+- Default encoder is `SlotAttentionEncoder` — the object-centric encoder from
+  the roadmap section above — since the whole point of moving to MOVi-E is to
+  test slot binding. `LatentEncoder` stays as a comparable baseline if needed.
+- Extend evaluation with object-centric metrics (FG-ARI, mBO) that compare
+  per-slot attention masks against the dumped GT segment PNGs, in addition to
+  the existing per-slot reconstruction grids.
+
+**Runs:**
+- 2026-05-23 — MOVi-E 200k-step run launched, `SlotAttentionEncoder` (11 slots,
+  128 resolution). Slurm job: see `jobs/movi_e_slot_attn_train_eval.sh`
+  (train+eval, 4x H100, wandb logging); output `results/movi-e_slot/`;
+  report (on completion) `docs/experiments/2026-05-23-movi-e-slot-attention.md`.
+  First run where FG-ARI / mBO numbers exist for this codebase.
+
 ## Encoder: pretrained feature extractor
 
 **Goal:** replace the trained-from-scratch convolutional feature extractor
