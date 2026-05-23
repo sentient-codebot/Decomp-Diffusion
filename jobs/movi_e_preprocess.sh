@@ -33,6 +33,12 @@ mkdir -p "$DATA_DIR"
 export TFDS_DATA_DIR="$HOME/prjs0993/cache/tfds"
 mkdir -p "$TFDS_DATA_DIR"
 
+# libcurl on this host looks at the Debian-style cert path by default; point
+# TF / gcsfs at the real RHEL bundle so HTTPS to gs:// works.
+export CURL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
+export SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt
+export REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
+
 echo "[preprocess] writing MOVi-E into $DATA_DIR/movi-e/"
 df -h "$DATA_DIR" | tail -n1
 
