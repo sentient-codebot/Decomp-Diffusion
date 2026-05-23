@@ -20,7 +20,7 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=4
 #SBATCH --time=24:00:00
-#SBATCH --output=slurm_%j.log
+#SBATCH --output=/home/nlin/prjs0993/Decomp-Diffusion-slot-encoder/slurm_logs/slurm_%j.log
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=n.lin@tudelft.nl
 
@@ -28,8 +28,18 @@ module load 2025
 
 cd ~/projects/Decomp-Diffusion-slot-encoder
 
-# uv-managed env; keep the HF cache off the home quota (see download_data.sh)
+# Redirect heavy outputs to project storage (200 GiB home quota is too small
+# for results/wandb/slurm-log accumulation -- a single 500k-step run produces
+# >20 GB of checkpoints). Idempotent: if results/wandb already exist (either
+# as a symlink or a real dir from before this hardening), leave them be.
+PRJS_DIR="$HOME/prjs0993/Decomp-Diffusion-slot-encoder"
+mkdir -p "$PRJS_DIR/results" "$PRJS_DIR/wandb" "$PRJS_DIR/slurm_logs"
+[ -e results ] || ln -s "$PRJS_DIR/results" results
+[ -e wandb ]   || ln -s "$PRJS_DIR/wandb"   wandb
+export WANDB_DIR="$PRJS_DIR/wandb"
+# HF cache is also on project storage (see download_data.sh).
 export HF_HOME="$HOME/prjs0993/Decomp-Diffusion/cache/huggingface"
+
 source .venv/bin/activate
 uv sync --extra wandb --extra tensorboard --extra xformers
 

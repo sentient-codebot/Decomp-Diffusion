@@ -6,6 +6,6 @@ image_test_output
 data
 log/
 logs/
-wandb/
-results/
+wandb
+results
 slurm_*.log

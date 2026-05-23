@@ -11,7 +11,7 @@
 #SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
 #SBATCH --time=00:30:00
-#SBATCH --output=slurm_%j.log
+#SBATCH --output=/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_%j.log
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=n.lin@tudelft.nl
 
@@ -19,8 +19,14 @@ module load 2025
 
 cd ~/projects/Decomp-Diffusion
 
-# uv-managed env; keep the HF cache off the home quota (see download_data.sh)
-export HF_HOME="$HOME/prjs0993/Decomp-Diffusion/cache/huggingface"
+# Redirect heavy outputs to project storage; see jobs/celebahq_train_eval_full.sh.
+PRJS_DIR="$HOME/prjs0993/Decomp-Diffusion"
+mkdir -p "$PRJS_DIR/results" "$PRJS_DIR/wandb" "$PRJS_DIR/slurm_logs"
+[ -e results ] || ln -s "$PRJS_DIR/results" results
+[ -e wandb ]   || ln -s "$PRJS_DIR/wandb"   wandb
+export WANDB_DIR="$PRJS_DIR/wandb"
+export HF_HOME="$PRJS_DIR/cache/huggingface"
+
 source .venv/bin/activate
 uv sync --extra wandb --extra tensorboard --extra xformers
 
