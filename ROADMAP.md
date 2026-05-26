@@ -117,6 +117,8 @@ slot-attention encoder (not only the CNN one).
 - 2026-05-26 — MOVi-E 200k-step run launched, `DinoSlotAttentionEncoder`
   (frozen DINO ViT-S/8, 11 slots, 128 resolution). Same step budget /
   effective batch / LR as the CNN slot-attn baseline so only the encoder
-  differs. Slurm job: see `jobs/movi_e_dino_slot_train_eval.sh` (train+eval,
-  4x H100, wandb logging); output `results/movi-e_dino_slot/`; report (on
-  completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.
+  differs. Slurm job 23117268 (train+eval, 4x H100); script
+  `jobs/movi_e_dino_slot_train_eval.sh`; output `results/movi-e_dino_slot/`;
+  report (on completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.
+  DINOv3 follow-up run pending HF gated-access approval (per user
+  conversation 2026-05-26).
