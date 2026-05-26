@@ -213,7 +213,7 @@ aggregation, which was redundancy-collapse prone.
   (Slurm 23123487, 2x A100) failed at step 0 with `AttributeError:
   'DistributedDataParallel' object has no attribute 'num_components'` --
   fixed in c4fcb40 by caching the encoder's slot / register counts before
-  `accelerator.prepare`. Resubmission moves to 2x H100 80 GB so the
+  `accelerator.prepare`. Resubmitted as 23124195 on 2x H100 80 GB so the
   K=24 / R=4 footprint (K+1=25 UNet forwards/step, cross-attn seq up to
   1+R=5) fits at PER_GPU_BATCH=8. Restart-safe via
   `--resume_from_checkpoint latest`. Script
