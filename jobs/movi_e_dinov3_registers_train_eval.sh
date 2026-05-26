@@ -3,17 +3,25 @@
 # with DINOv3 ViT-S/16 at 256 resolution PLUS 4 learned register slots.
 #
 # Same backbone/resolution/budget as jobs/movi_e_dinov3_slot_train_eval.sh, but
-# the encoder config sets num_registers=4 and training now uses the
-# compositional sum-of-deltas objective implemented in 90108cb:
+# the encoder config sets num_registers=4, num_components=24 and training now
+# uses the compositional sum-of-deltas objective implemented in 90108cb:
 #   eps = (1 - K) * eps_uncond + sum_k eps_slot_k
 # with eps_uncond conditioned on the 4 register tokens only. This swaps the
 # previous mean-aggregation loss (which was redundancy-collapse prone) for an
 # objective that explicitly rewards per-slot specialisation.
 #
+# K bumped from 11 -> 24 to match Nguyen et al. 2026 -- MOVi-E scenes can
+# carry ~20 instances, so 11 may have been undercounting.
+#
 # Earlier MOVi-E runs (DINO v1 23117268 and DINOv3 23118028 without registers)
 # were cancelled to free SBU for this run -- their intermediate checkpoints
 # remain in place but the trajectories under the new loss are not comparable,
 # so we start fresh under a separate output dir.
+#
+# Moved to 2x H100: K=24 nearly doubles the per-step UNet work (K+1 = 25
+# forwards/step vs 12 before) and the cross-attn sequence is (1+R)=5 long
+# instead of 1, so VRAM headroom matters more here than on the prior A100
+# config; H100's 80 GB lets us keep PER_GPU_BATCH=8.
 #
 # Depends on data laid down by jobs/movi_e_preprocess.sh
 # (~/prjs0993/datasets/movi-e/).
@@ -25,8 +33,8 @@
 # and a token cached under $HF_HOME (huggingface-cli login once).
 #
 # Submit from the repo root: `sbatch jobs/movi_e_dinov3_registers_train_eval.sh`.
-#SBATCH --job-name="movi-e-dinov3-reg4-200k"
-#SBATCH --partition=gpu_a100
+#SBATCH --job-name="movi-e-dinov3-k24r4-200k"
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=2
 #SBATCH --time=24:00:00
 #SBATCH --output=slurm_%j.log
@@ -79,8 +87,9 @@ START=$(date +%s)
 # --- 1. Train (DDP, 2 GPU -- no srun) ----------------------------------------
 # --train_batch_size $PER_GPU_BATCH over 2 GPUs -> effective batch 16.
 # Same per-GPU batch as the no-register dinov3 run to keep results comparable;
-# the extra unconditional UNet forward per step (registers-only pass) makes
-# each step ~(K+1)/K ~= 1.09x heavier.
+# with K=24 + R=4 each step does K+1=25 UNet forwards (vs 12 at K=11) and the
+# cross-attn sequence is 5 long (1 slot + 4 registers) for cond, 4 for uncond.
+# A100 40 GB would be tight at this batch -- 2x H100 80 GB gives the headroom.
 # --resolution overrides the train_config default (128) to 256.
 uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision fp16 \
     --main_process_port 29501 train_lsd.py \
@@ -271,7 +280,7 @@ cat > "$REPORT" <<EOF
 **Status:** $OVERALL
 **Date:** $(date -u +%Y-%m-%dT%H:%MZ)
 **Slurm job:** ${SLURM_JOB_ID:-N/A} (script: jobs/movi_e_dinov3_registers_train_eval.sh, log: slurm_${SLURM_JOB_ID}.log)
-**Node / GPUs:** ${SLURM_JOB_NODELIST:-N/A}, 2x A100
+**Node / GPUs:** ${SLURM_JOB_NODELIST:-N/A}, 2x H100
 **wandb run:** $WANDB_URL
 
 ## Purpose
@@ -291,7 +300,7 @@ collapse seen with the previous mean-aggregation loss.
 | Patch grid | 16x16 at 256 input (patch_size=16) |
 | Special tokens dropped (backbone) | 5 (1 CLS + 4 register) |
 | Slot Attention iters | 3 |
-| Slots (num_components, K) | 11 |
+| Slots (num_components, K) | 24 |
 | Register slots (R) | 4 |
 | Slot dim (latent_dim) | 64 |
 | Loss | sum-of-deltas, registers as uncond context |

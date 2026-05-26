@@ -2,7 +2,7 @@
   "_class_name": "DinoSlotAttentionEncoder",
   "_diffusers_version": "0.31.0",
   "dino_model_name": "facebook/dinov3-vits16-pretrain-lvd1689m",
-  "num_components": 11,
+  "num_components": 24,
   "image_size": 256,
   "latent_dim": 64,
   "slot_iters": 3,

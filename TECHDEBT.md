@@ -29,3 +29,19 @@ constraint-dependencies = ["setuptools<81"]
 ```
 
 then re-sync (`uv sync --extra wandb --extra tensorboard --extra xformers`). Alternatively, drop tensorboard entirely and standardise on wandb (`--report_to wandb`), which is the preferred logging backend going forward.
+
+## Capacity / resolution gap vs Nguyen et al. 2026 baseline
+
+When comparing the register-slot results in this repo against Nguyen et al. 2026 (*Improved Object-centric Diffusion* -- our primary reference for the register-slot direction), keep in mind that their setup is significantly heavier than ours on several axes:
+
+| Axis | Nguyen et al. 2026 | This repo (movi-e dinov3) |
+|------|-------------------|--------------------------|
+| Image resolution | 512 x 512 | 256 x 256 |
+| Slot-attention input feature grid | 32 x 32 | 16 x 16 |
+| Slot hidden dim | 768 | 64 |
+| Register count R | 77 (frozen CLIP-text) | 4 (learned) |
+| Object slots K (MOVi-E) | 24 | 24 (now matched) |
+
+So even with matching K and the same architectural shape, this repo's slots have ~12x less capacity (64 vs 768) and operate on a 4x coarser feature grid. Their results are not a fair upper bound for what we should expect at our current settings -- any large gap in FG-ARI / mBO should first be attributed to capacity / resolution before concluding the method itself is the bottleneck.
+
+**Fix:** before chasing SOTA numbers, raise `latent_dim` (64 -> 256 or 768), increase the feature grid (use a smaller patch / higher input resolution so the ViT produces a 32 x 32 grid), and switch to frozen-CLIP register priors. Until then, document this gap in every comparison report.

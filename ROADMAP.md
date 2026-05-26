@@ -204,18 +204,26 @@ the registers only and each `eps_slot_k` conditions on `[slot_k, registers]`
 aggregation, which was redundancy-collapse prone.
 
 **Runs:**
-- 2026-05-26 — DINOv3 + R=4 register slots, MOVi-E 200k-step run. Same
-  backbone / resolution / step budget as the cancelled no-register DINOv3
-  run, only `num_registers` (0 -> 4) and the loss (mean -> sum-of-deltas)
-  change. Slurm job 23123487 (train+eval, 2x A100, 24h, restart-safe via
-  `--resume_from_checkpoint latest`); script
+- 2026-05-26 — DINOv3 + R=4 register slots + K=24 object slots, MOVi-E
+  200k-step run. Same backbone / resolution / step budget as the cancelled
+  no-register DINOv3 run; encoder config now has `num_registers=4` and
+  `num_components=24`, and the loss is sum-of-deltas with the registers as
+  the uncond context (90108cb). K bumped from 11 to 24 to match Nguyen et
+  al. 2026's MOVi-E setting (~20 instances per scene). First submission
+  (Slurm 23123487, 2x A100) failed at step 0 with `AttributeError:
+  'DistributedDataParallel' object has no attribute 'num_components'` --
+  fixed in c4fcb40 by caching the encoder's slot / register counts before
+  `accelerator.prepare`. Resubmission moves to 2x H100 80 GB so the
+  K=24 / R=4 footprint (K+1=25 UNet forwards/step, cross-attn seq up to
+  1+R=5) fits at PER_GPU_BATCH=8. Restart-safe via
+  `--resume_from_checkpoint latest`. Script
   `jobs/movi_e_dinov3_registers_train_eval.sh`; config
   `configs/movi-e/dinov3_slot_encoder/config.json`; output
   `results/movi-e_dinov3_reg/`; report (on completion)
   `docs/experiments/2026-05-26-movi-e-dinov3-registers.md`. Also adds
-  `val_loss` and `slot_pairwise_cos` (mean off-diagonal pairwise cosine sim of
-  object slots, a collapse diagnostic) to wandb logging at every validation
-  step.
+  `val_loss` and `slot_pairwise_cos` (mean off-diagonal pairwise cosine sim
+  of object slots, a collapse diagnostic) to wandb logging at every
+  validation step.
 
 ## Object-centric representation metrics (planned)
 
