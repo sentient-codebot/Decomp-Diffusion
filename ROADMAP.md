@@ -290,3 +290,32 @@ register-only ablations stay clean.
 **Sequencing:** depends on the DINOv3 + R=4 run (23123487) — if registers
 alone solve collapse, this is lower-priority; if `slot_pairwise_cos` still
 trends toward 1 there, this is the obvious next lever.
+
+## Decoder backbone: trainable surface and DiT (planned)
+
+**Goal:** explore shrinking the trainable surface of the diffusion decoder,
+and longer-term swap the UNet backbone for a DiT-based one. Right now we
+train the full SD 2.1 UNet plus the encoder; the encoder is what should be
+doing the object-centric work, so paying for full UNet gradients is mostly
+inertia from the original LSD recipe.
+
+**Train only the cross-attention projections (in scope, future run).** Match
+Sony CoDA's setup on MOVi-E: freeze the UNet and only train the cross-attn
+K / V / out projections (`.attn2.to_k.`, `.attn2.to_v.`, `.attn2.to_out.`)
+plus the encoder. Same backbone (SD 2.1), same step budget, same encoder —
+the comparison is purely about how much decoder capacity the slot
+conditioning needs to bind into. Land it as a flag on `train_lsd.py` that
+toggles between full-UNet and projections-only param groups, so existing
+runs stay reproducible. Worth pairing with CoDA's other cheap hygiene
+items (CFG dropout, short LR warmup) if we want a clean head-to-head.
+
+**DiT backbone, e.g. SD3 (out of scope for this paper, exploratory).** Same
+training-surface question but with a transformer denoiser: SD3 / similar
+MM-DiT models replace the cross-attention UNet entirely. Slot conditioning
+would have to be re-plumbed (MM-DiT consumes text tokens as a second stream
+rather than via cross-attn into a UNet), and again we would *not* train the
+full denoiser — most likely only the slot-conditioning input projections /
+adapters. Useful as a sanity check that the decomposition story isn't
+specific to SD-1.5/2.x cross-attention UNets. Defer until the projections-
+only variant on the UNet is understood; this is a "next project" item, not
+something to crowd into the current write-up.
