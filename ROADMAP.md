@@ -160,15 +160,30 @@ improve binding stability.
 **Hyperparameter note (Nguyen et al., 2026 settings):** the paper uses
 **R = 77 register slots across all datasets** (VOC, COCO, MOVi) and
 **K = 24 object slots for MOVi-E** — both substantially higher than the
-values used here (R=4, K=11). The R=77 figure is unusually large and
-likely tuned for that paper's specific decoder / loss; it is not obvious
-that it transfers as-is to our setup, but it is the calibrated reference
-point. K=24 is more directly motivated: MOVi-E scenes can have ~20
-instances, so the K=11 used here may be undercounting. If the in-flight
-R=4 / K=11 run still shows collapse or weak binding, plausible next steps
-in order of cost: raise K toward 24 first (more headroom per object),
-then sweep R upward (start at ~7–16 before going as high as the paper's
-77) before reaching for an auxiliary diversity loss.
+values used here (R=4, K=11).
+
+The R=77 figure is not a tuned choice — it comes from the paper using a
+**frozen CLIP text encoder** to generate the register priors, and CLIP's
+text encoder has a maximum sequence length of 77 tokens. So in their setup
+registers aren't learned at all: the K object slots come out of slot
+attention as usual, the R=77 registers are fixed CLIP-text outputs, and
+the diffusion decoder cross-attends to the concatenation. The paper notes
+that **learning the registers also works**, so a frozen-CLIP register
+prior is one of several viable variants — the appeal being that you get a
+strong "what's not an object" anchor for free without parameters to fit.
+
+Implication for this codebase: we currently learn the registers as
+`nn.Parameter`s, which is the simpler path and fine for the exploration /
+development stage we're in. **Frozen-CLIP register priors are a SOTA-chase
+lever**, not an exploration-stage one — defer until the loss/architecture
+work is settled and we're trying to match published numbers.
+
+K=24 is more directly motivated: MOVi-E scenes can have ~20 instances, so
+the K=11 used here may be undercounting. If the in-flight R=4 / K=11 run
+still shows collapse or weak binding, plausible next steps in order of
+cost: raise K toward 24 first (more headroom per object), then sweep R
+upward (start at ~7–16 with learned registers) before considering an
+auxiliary diversity loss or switching to frozen-CLIP register priors.
 
 **How to land it:** extend `SlotAttention` (`src/models/slot_attn.py`) with
 an R hyperparameter for register slots — initialized like the object slots
