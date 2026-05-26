@@ -220,3 +220,37 @@ These should be wired into `eval_movi.py` (full-validation pass) and a
 subset into `train_lsd.py`'s `log_validation` (per-step wandb scalars), so
 that "did the slots decompose?" is answerable from the wandb dashboard mid
 training, not only post-hoc.
+
+## Auxiliary slot diversity / disentanglement loss
+
+**Goal:** add an explicit auxiliary loss term that *pushes* slots apart in
+representation space, instead of relying only on the implicit pressure from
+the sum-of-deltas diffusion objective. The compositional loss alone leaves a
+local minimum at "all slots predict the mean," which slot-pairwise cosine
+sim diagnostics will catch but won't itself fix.
+
+**Reference:** Nguyen et al., 2026 — *Improved Object-centric Diffusion*
+(`nguyen2026ImprovedObjectcentricDiffusion`) — same paper cited under the
+register-slot section; it pairs registers with an auxiliary diversity term
+on the object slots, the combination being what gives them their reported
+gain over plain register slots.
+
+**Candidate forms (decide after reading the paper carefully):**
+- Pairwise repulsion on object-slot embeddings: penalise high off-diagonal
+  cosine sim of the K object slots (essentially turn the diagnostic into a
+  loss). Cheap; small weight to start.
+- Cross-attention orthogonality: penalise overlap between the slot-attention
+  masks of different slots at the encoder side, so two slots can't claim the
+  same input tokens.
+- Contrastive / InfoNCE on slots across images, treating "same slot index
+  across images" as not-positive — discourages the model from collapsing
+  slots to a fixed image-independent set of attractors.
+
+**Where it lives:** the loss term goes alongside the diffusion MSE in
+`train_lsd.py`'s training loop; weighting controlled by a new hyperparameter
+in `configs/<dataset>/train_config.yaml`. Should be opt-in (default 0.0) so
+register-only ablations stay clean.
+
+**Sequencing:** depends on the DINOv3 + R=4 run (23123487) — if registers
+alone solve collapse, this is lower-priority; if `slot_pairwise_cos` still
+trends toward 1 there, this is the obvious next lever.
