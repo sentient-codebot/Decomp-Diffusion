@@ -125,8 +125,12 @@ slot-attention encoder (not only the CNN one).
   `interpolate_pos_encoding` (DINOv3 uses RoPE, no such kwarg; CLS + 4
   register tokens dropped). Run at 256 resolution so patch_size=16 gives the
   same 16x16 patch grid as the v1 / CNN runs at 128. Effective batch dropped
-  to 32 (4 GPU x 8) to fit the 4x larger UNet input; walltime 48h. Slurm
-  job 23117941; script `jobs/movi_e_dinov3_slot_train_eval.sh`; config
+  to 16 (2 A100 x 8). First submission (23117941, 4x H100 48h) was killed
+  by the Snellius budget guard at 0s -- the v1 reservation left only
+  ~8.9k SBUs and the 48h H100 ask wanted ~37k. Resubmitted as 23118028
+  on 2x A100 with 24h walltime (~6.1k SBUs); restart-safe via
+  `--resume_from_checkpoint latest` for multi-slot continuation.
+  Script `jobs/movi_e_dinov3_slot_train_eval.sh`; config
   `configs/movi-e/dinov3_slot_encoder/config.json`; output
   `results/movi-e_dinov3_slot/`; report (on completion)
   `docs/experiments/2026-05-26-movi-e-dinov3-slot-attention.md`.
