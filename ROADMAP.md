@@ -179,7 +179,9 @@ aggregation, which was redundancy-collapse prone.
 - 2026-05-26 — DINOv3 + R=4 register slots, MOVi-E 200k-step run. Same
   backbone / resolution / step budget as the cancelled no-register DINOv3
   run, only `num_registers` (0 -> 4) and the loss (mean -> sum-of-deltas)
-  change. Script `jobs/movi_e_dinov3_registers_train_eval.sh`; config
+  change. Slurm job 23123487 (train+eval, 2x A100, 24h, restart-safe via
+  `--resume_from_checkpoint latest`); script
+  `jobs/movi_e_dinov3_registers_train_eval.sh`; config
   `configs/movi-e/dinov3_slot_encoder/config.json`; output
   `results/movi-e_dinov3_reg/`; report (on completion)
   `docs/experiments/2026-05-26-movi-e-dinov3-registers.md`. Also adds
