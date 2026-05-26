@@ -60,3 +60,23 @@ CUDA_VISIBLE_DEVICES=0,1 uv run accelerate launch --multi_gpu --num_processes=2 
 
 Any hyperparameter in the YAML can be overridden on the command line, e.g.
 appending `--learning_rate 1e-5` (the flag wins over the config value).
+
+# 4. evaluate
+
+Three offline metric scripts exist; all read a checkpoint dir saved by
+`train_lsd.py`. MOVi-E is the only dataset wired up for object-discovery and
+property-probing today; VOC / COCO are roadmap items.
+
+```bash
+# Task 1: object discovery -- FG-ARI, mBO, mIoU (Hungarian-matched) + viz grids.
+bash scripts/movi-e/eval.sh <ckpt_path> <output_dir>
+# Task 2: property-prediction probe -- position (MSE), 3D bbox (MSE),
+# category (accuracy). Hungarian matches slot masks to GT, trains a frozen-slot
+# MLP, reports test-split numbers.
+bash scripts/movi-e/probe.sh <ckpt_path> <output_dir>
+```
+
+Training-time validation can also stream the segmentation metrics to wandb if
+you pass `--movi_eval_root <root>` to `train_lsd.py` (off by default, so
+CelebA-HQ runs are unaffected). The MOVi pair dataset is capped to
+`--movi_eval_max_images` (default 256) for a quick read each `validation_steps`.

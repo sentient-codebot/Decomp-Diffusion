@@ -225,7 +225,7 @@ aggregation, which was redundancy-collapse prone.
   of object slots, a collapse diagnostic) to wandb logging at every
   validation step.
 
-## Object-centric representation metrics (planned)
+## Object-centric representation metrics
 
 **Goal:** broaden evaluation beyond per-component decoding grids and the
 single FG-ARI / mBO check, so we can spot decomposition failures (slot
@@ -233,29 +233,68 @@ collapse, slot-to-object mis-binding, slot-redundancy) from numbers rather
 than only by eyeballing grids — and so we can stop weighting individual
 component decoding as the primary signal it currently is.
 
-**Candidates to evaluate / add (no need to do this immediately):**
-- *Slot-collapse diagnostics:* mean off-diagonal slot pairwise cosine
-  similarity (already added to wandb in this branch) and slot-norm spread.
-  Cheap, log every validation step.
-- *Attention-mask metrics:* slot attention entropy (per slot, averaged over
-  the image) and a Hungarian-matched per-object IoU on the slot attention
-  masks against the GT instance masks (mBO already does the closest thing
-  but at decoded-component resolution).
-- *Slot purity / object-completeness* over the GT segments
-  (Engelcke et al. / Greff et al. style).
-- *Representational metrics on the slot vectors:* probe each slot for the
-  per-object MOVi-E attributes shipped with the dump
-  (`labels/*_labels.json` already has bbox / shape / material / color /
-  3d-coords); a linear probe accuracy on object slots ~ "is the slot
-  identifiable as a single object" without needing image decoding.
-- *Decoder-free reconstruction proxies:* DINO-feature reconstruction MSE per
-  slot (DINOSAUR-style), evaluable without paying the diffusion sampling
-  cost.
+**Reference for metric definitions:** sony/coda
+(`src/metric/segmentation.py`, `experiment/linear_prob.py`) — mIoU uses
+Hungarian matching via `scipy.optimize.linear_sum_assignment`; property
+probe uses mask-cosine matching cost with the 2-layer MLP (continuous) /
+linear (discrete) heads from that repo.
 
-These should be wired into `eval_movi.py` (full-validation pass) and a
-subset into `train_lsd.py`'s `log_validation` (per-step wandb scalars), so
-that "did the slots decompose?" is answerable from the wandb dashboard mid
-training, not only post-hoc.
+**Done (MOVi-E):**
+
+- *Task 1 — Object discovery:* FG-ARI, mBO, and Hungarian-matched mIoU
+  live in `src/metrics/segmentation.py`. `eval_movi.py` runs all three
+  offline. `train_lsd.py:log_validation` also streams `val/fg_ari`,
+  `val/mbo`, `val/miou` to wandb when the run is launched with
+  `--movi_eval_root <root>` and the encoder is a slot-attention variant.
+  Slot collapse diagnostic `slot_pairwise_cos` and `val_loss` continue to
+  log unconditionally.
+- *Task 2 — Property-prediction probe:* `probe_movi.py` freezes the slot
+  encoder, Hungarian-matches slot attention masks to GT instance masks
+  (mask cosine cost), and trains a small MLP per property:
+  `image_positions` and `bboxes_3d` (2-layer MLP, hidden 786, MSE) and
+  `category` (single linear layer, cross-entropy — sony/coda's
+  discrete-head convention). Reports test-split metrics + caches matched
+  (slot, property) pairs under `<output_dir>/cache_<split>.pt` so the
+  probe can be re-trained without rerunning the encoder. Launch wrappers
+  under `scripts/movi-e/{eval,probe}.sh`.
+
+**Still candidate (not yet wired):**
+
+- *Slot attention entropy* (per slot, averaged over the image).
+- *Slot-norm spread* alongside `slot_pairwise_cos`.
+- *DINO-feature reconstruction MSE* per slot (DINOSAUR-style), evaluable
+  without paying the diffusion sampling cost.
+
+## Compositional image generation metrics (planned)
+
+**Goal:** report **reconstruction FID/KID** (slots from a real image,
+decoded back) and **compositional FID/KID** (slots assembled across
+different images, decoded) on a natural-image dataset. The compositional
+score is the headline number — it tests whether the decoder can render
+unseen slot combinations, which is what "compositional generation"
+actually means.
+
+**Target dataset: COCO.** Not implemented in this codebase yet — needs a
+COCO loader (`GlobDataset` reads pixels only and currently powers the
+celebahq / MOVi-E paths). Before this section can be moved to "done":
+
+- Add a `CocoDataset` (instance masks for the slot-discovery side, raw
+  pixels for the generation side).
+- Add `configs/coco/` mirroring `configs/movi-e/`.
+- Wire FID/KID via `cleanfid` or `torchmetrics.image`; add the dep behind
+  an extra in `pyproject.toml`.
+- Compositional sampling: assemble cross-batch slot mixtures (e.g. roll
+  slot indices across the batch dim) before the pipeline call — the
+  pipeline already accepts arbitrary `prompt_embeds` per
+  `src/pipeline/composable_stable_diffusion_pipeline.py`.
+
+## VOC support (planned)
+
+Out of scope until a VOC dataset / loader exists. Once it does, the same
+Task 1 (FG-ARI / mBO / mIoU via `src/metrics/segmentation.py`) and Task 2
+(property probe via the same matching + probe template as
+`probe_movi.py`) machinery applies — only the dataset class and config
+need to change.
 
 ## Auxiliary slot diversity / disentanglement loss
 
