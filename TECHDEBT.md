@@ -30,6 +30,20 @@ constraint-dependencies = ["setuptools<81"]
 
 then re-sync (`uv sync --extra wandb --extra tensorboard --extra xformers`). Alternatively, drop tensorboard entirely and standardise on wandb (`--report_to wandb`), which is the preferred logging backend going forward.
 
+## H100 throughput knobs left on the table
+
+Current MOVi-E training (default 2x H100, e.g. `jobs/movi_e_dinov3_registers_train_eval.sh`) is using `mixed_precision: fp16` + xformers MEA, with `allow_tf32`, `torch.compile` and bf16 all unused. On Hopper this leaves measurable throughput unclaimed:
+
+- **`fp16` instead of `bf16`** -- H100 has identical TFLOPs for both, but bf16's wider exponent range removes the loss-scaler / NaN risk that fp16 + diffusion training is known for. `src/parser.py:231` already exposes `bf16`; flipping `mixed_precision` in `configs/{celebahq,movi-e}/train_config.yaml` is the only change needed.
+- **`allow_tf32` not set** -- wired through (`train_lsd.py:548-551`) but no job passes `--allow_tf32`, so the non-AMP matmuls (encoder, slot-attention master weights) miss out.
+- **No `torch.compile`** -- UNet + slot-attention are well-suited to it on H100 (cudagraphs + Triton); typical 1.3-1.8x on diffusion training.
+- **xformers MEA over PyTorch SDPA** -- on H100, SDPA selects FlashAttention-3, which is usually faster than xformers' MEA. Worth A/B-ing and dropping `enable_xformers_memory_efficient_attention` if SDPA wins.
+- **`dataloader_num_workers=4`** -- low for the 256-res DINOv3 path; bump to 8-12 + `persistent_workers=True` to keep both H100s fed.
+
+VRAM headroom on the 128-res runs is also unused (per-GPU batch 16-32 on 80 GB H100), but raising that interacts with effective-batch / LR comparability across runs, so handle it separately from the throughput knobs above.
+
+**Fix:** land bf16 + `allow_tf32: true` + worker bump as a single low-risk pass, validated on a smoketest. Benchmark `torch.compile(unet)` and SDPA-vs-xformers separately before committing them to the long runs.
+
 ## Capacity / resolution gap vs Nguyen et al. 2026 baseline
 
 When comparing the register-slot results in this repo against Nguyen et al. 2026 (*Improved Object-centric Diffusion* -- our primary reference for the register-slot direction), keep in mind that their setup is significantly heavier than ours on several axes:
