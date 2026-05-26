@@ -5,6 +5,7 @@ import sys
 
 if __name__ == "__main__":
     sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
+import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models import ModelMixin
 from torch import nn
@@ -234,6 +235,131 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
         return slots
 
 
+class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
+    """Slot Attention encoder with a pretrained DINO ViT feature extractor.
+
+    Drop-in for ``SlotAttentionEncoder`` -- same ``[B, num_components,
+    latent_dim]`` output, same ``return_attn`` API -- but the trained-from-scratch
+    CNN front end is replaced by a pretrained DINO ViT (Caron et al., 2021).
+    Patch tokens (CLS dropped) form the feature map fed into the same soft
+    positional embedding + Slot Attention read-out.
+
+    DINO is frozen by default: it already provides strong self-supervised
+    per-patch features, so only the slot-attention head learns. Set
+    ``freeze_backbone=False`` to fine-tune end-to-end.
+
+    Images come in dataset-normalised (mean=0.5, std=0.5); they are
+    re-normalised to ImageNet stats inside ``forward`` for the ViT.
+    """
+
+    @register_to_config
+    def __init__(
+        self,
+        dino_model_name="facebook/dino-vits8",
+        num_components=11,
+        image_size=128,
+        latent_dim=64,
+        slot_iters=3,
+        slot_hidden_dim=128,
+        freeze_backbone=True,
+    ):
+        super().__init__()
+        # Local import: keeps the top-level import of this module fast and
+        # avoids pulling in transformers for the LatentEncoder/SlotAttentionEncoder
+        # paths that don't need it.
+        from transformers import ViTModel
+
+        self.num_components = num_components
+        self.image_size = image_size
+        self.latent_dim = latent_dim
+        self.freeze_backbone = freeze_backbone
+
+        self.backbone = ViTModel.from_pretrained(
+            dino_model_name, add_pooling_layer=False
+        )
+        feat_dim = self.backbone.config.hidden_size
+        patch_size = self.backbone.config.patch_size
+        if image_size % patch_size != 0:
+            raise ValueError(
+                f"image_size {image_size} must be divisible by DINO patch_size "
+                f"{patch_size} (model {dino_model_name})."
+            )
+        feat_size = image_size // patch_size
+        self.feat_size = feat_size
+
+        if freeze_backbone:
+            self.backbone.requires_grad_(False)
+
+        # ImageNet normalisation (non-persistent: not part of state_dict).
+        self.register_buffer(
+            "imagenet_mean",
+            torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
+            persistent=False,
+        )
+        self.register_buffer(
+            "imagenet_std",
+            torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+            persistent=False,
+        )
+
+        # Slot-attention head -- identical to SlotAttentionEncoder, only the
+        # input feature dim differs (ViT hidden size instead of CNN channels).
+        self.pos_embed = SoftPositionEmbed(feat_dim, (feat_size, feat_size))
+        self.layer_norm = nn.LayerNorm(feat_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(feat_dim, latent_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(latent_dim, latent_dim),
+        )
+        self.slot_attention = SlotAttention(
+            num_slots=num_components,
+            dim=latent_dim,
+            iters=slot_iters,
+            hidden_dim=slot_hidden_dim,
+        )
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.freeze_backbone:
+            # Keep dropout/etc inside the frozen ViT off regardless of the
+            # outer training mode.
+            self.backbone.eval()
+        return self
+
+    def _encode_backbone(self, x):
+        # x: pixel_values in dataset normalisation (mean=0.5, std=0.5).
+        # Convert to [0,1] then to ImageNet stats.
+        img_01 = x * 0.5 + 0.5
+        x_in = (img_01 - self.imagenet_mean.to(x.dtype)) / self.imagenet_std.to(x.dtype)
+        # interpolate_pos_encoding=True: DINO ViT-S/8 was pretrained at 224
+        # (28x28 patches); we typically run at 128 (16x16 patches), so the
+        # positional embeddings must be interpolated to the new grid.
+        out = self.backbone(pixel_values=x_in, interpolate_pos_encoding=True)
+        # Drop CLS token -> [B, num_patches, feat_dim].
+        return out.last_hidden_state[:, 1:, :]
+
+    def forward(self, x, return_attn=False):
+        if self.freeze_backbone:
+            # Detach from the autograd graph -- frozen weights don't need it,
+            # and skipping it frees activation memory.
+            with torch.no_grad():
+                tokens = self._encode_backbone(x)
+        else:
+            tokens = self._encode_backbone(x)
+
+        h = w = self.feat_size
+        features = tokens.reshape(tokens.shape[0], h, w, tokens.shape[-1])
+        features = self.pos_embed(features)
+        features = features.flatten(1, 2)
+        features = self.mlp(self.layer_norm(features))  # [B, h*w, latent_dim]
+        if return_attn:
+            slots, attn = self.slot_attention(features, return_attn=True)
+            attn = attn.reshape(attn.shape[0], attn.shape[1], h, w)
+            return slots, attn
+        slots = self.slot_attention(features)
+        return slots
+
+
 # --- Encoder selection -------------------------------------------------------
 # Both encoders share the [B, num_components, latent_dim] output contract, so
 # they are interchangeable. Which one a run uses is decided by the
@@ -242,6 +368,7 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
 ENCODER_REGISTRY = {
     "LatentEncoder": LatentEncoder,
     "SlotAttentionEncoder": SlotAttentionEncoder,
+    "DinoSlotAttentionEncoder": DinoSlotAttentionEncoder,
 }
 
 # For isinstance() checks that need to tell an encoder from the UNet.

@@ -102,3 +102,21 @@ is expected to improve decomposition quality and convergence speed.
 `SlotAttentionEncoder` as the comparison point. Only the feature-extractor
 front end changes; the soft positional embedding + Slot Attention read-out
 stay as they are.
+
+**Done:** `DinoSlotAttentionEncoder` (`src/models/encoder.py`) wraps a
+pretrained DINO ViT (`facebook/dino-vits8`, frozen by default) and feeds its
+patch tokens — CLS dropped, positional embeddings interpolated to the run
+resolution — into the same soft pos-embed + Slot Attention head as
+`SlotAttentionEncoder`. Registered in `ENCODER_REGISTRY`, so it's selectable
+through `_class_name` like the other encoders. Config:
+`configs/movi-e/dino_slot_encoder/config.json` (11 slots, ViT-S/8, 128 res
+→ 16x16 patch grid). `eval_movi.py` was relaxed to accept any
+slot-attention encoder (not only the CNN one).
+
+**Runs:**
+- 2026-05-26 — MOVi-E 200k-step run launched, `DinoSlotAttentionEncoder`
+  (frozen DINO ViT-S/8, 11 slots, 128 resolution). Same step budget /
+  effective batch / LR as the CNN slot-attn baseline so only the encoder
+  differs. Slurm job: see `jobs/movi_e_dino_slot_train_eval.sh` (train+eval,
+  4x H100, wandb logging); output `results/movi-e_dino_slot/`; report (on
+  completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.

@@ -29,7 +29,15 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.utils import make_grid
 
-from src.models.encoder import SlotAttentionEncoder, load_latent_encoder
+from src.models.encoder import (
+    DinoSlotAttentionEncoder,
+    SlotAttentionEncoder,
+    load_latent_encoder,
+)
+
+
+# Encoders that expose per-slot attention masks via forward(..., return_attn=True).
+SLOT_ATTN_ENCODER_CLASSES = (SlotAttentionEncoder, DinoSlotAttentionEncoder)
 
 
 def parse_args():
@@ -208,14 +216,17 @@ def main():
     ]
 
     encoder = load_latent_encoder(args.ckpt_path)
-    if not isinstance(encoder, SlotAttentionEncoder):
+    if not isinstance(encoder, SLOT_ATTN_ENCODER_CLASSES):
+        allowed = ", ".join(c.__name__ for c in SLOT_ATTN_ENCODER_CLASSES)
         raise SystemExit(
-            f"eval_movi requires a SlotAttentionEncoder checkpoint; got {type(encoder).__name__}. "
-            "Re-train with configs/movi-e/slot_encoder/config.json."
+            f"eval_movi requires a slot-attention encoder ({allowed}); "
+            f"got {type(encoder).__name__}."
         )
     encoder = encoder.to(device=device, dtype=dtype)
     encoder.eval()
-    print(f"loaded SlotAttentionEncoder with {encoder.num_components} slots")
+    print(
+        f"loaded {type(encoder).__name__} with {encoder.num_components} slots"
+    )
 
     dataset = MoviPairDataset(
         root=args.dataset_root,
