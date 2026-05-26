@@ -158,13 +158,17 @@ improve binding stability.
   (register-token usage in slot attention pipelines).
 
 **Hyperparameter note (Nguyen et al., 2026 settings):** the paper uses
-**R = 7 register slots across all datasets** (VOC, COCO, MOVi) and **K = 24
-object slots for MOVi-E** — both higher than the values used here (R=4,
-K=11). If the in-flight R=4 / K=11 run still shows collapse or weak
-binding, raising both to the paper's settings is the obvious next thing to
-try before reaching for an auxiliary diversity loss; K=24 also gives the
-model more headroom to bind individual objects on scenes that can have
-~20 instances.
+**R = 77 register slots across all datasets** (VOC, COCO, MOVi) and
+**K = 24 object slots for MOVi-E** — both substantially higher than the
+values used here (R=4, K=11). The R=77 figure is unusually large and
+likely tuned for that paper's specific decoder / loss; it is not obvious
+that it transfers as-is to our setup, but it is the calibrated reference
+point. K=24 is more directly motivated: MOVi-E scenes can have ~20
+instances, so the K=11 used here may be undercounting. If the in-flight
+R=4 / K=11 run still shows collapse or weak binding, plausible next steps
+in order of cost: raise K toward 24 first (more headroom per object),
+then sweep R upward (start at ~7–16 before going as high as the paper's
+77) before reaching for an auxiliary diversity loss.
 
 **How to land it:** extend `SlotAttention` (`src/models/slot_attn.py`) with
 an R hyperparameter for register slots — initialized like the object slots
