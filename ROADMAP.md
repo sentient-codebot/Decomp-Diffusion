@@ -122,3 +122,28 @@ slot-attention encoder (not only the CNN one).
   report (on completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.
   DINOv3 follow-up run pending HF gated-access approval (per user
   conversation 2026-05-26).
+
+## Slot attention: register slots
+
+**Goal:** add **register-style slots** to the current Slot Attention module.
+On top of the K "object" slots used downstream by the diffusion decoder,
+allocate R extra "register" slots that participate in the iterative attention
+competition but are discarded before decoding. They give the attention a
+sink for background / global / non-object content so the object slots aren't
+forced to absorb it, which has been reported to reduce slot collapse and
+improve binding stability.
+
+**References:**
+- Nguyen et al., 2026 — *Improved Object-centric Diffusion* (register slots
+  for object-centric diffusion).
+- Didolkar et al., 2024 — *Transfer of Object-centric Representations*
+  (register-token usage in slot attention pipelines).
+
+**How to land it:** extend `SlotAttention` (`src/models/slot_attn.py`) with
+an R hyperparameter for register slots — initialized like the object slots
+but kept separate at read-out, so only the first K slots are returned to the
+encoder / diffusion conditioning. Plumb `num_registers` through the encoder
+configs (`SlotAttentionEncoder` and `DinoSlotAttentionEncoder`). Keep the
+no-register path (R=0) as default so the change is opt-in and existing runs
+stay comparable. First test on MOVi-E with the DINO backbone, since that's
+where slot binding is measurable via FG-ARI / mBO.
