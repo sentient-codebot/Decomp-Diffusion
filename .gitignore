@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .python-version
 image_test_output
-data
+/data
 log/
 logs/
 wandb
