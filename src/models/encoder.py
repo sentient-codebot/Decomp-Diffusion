@@ -267,18 +267,21 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
         # Local import: keeps the top-level import of this module fast and
         # avoids pulling in transformers for the LatentEncoder/SlotAttentionEncoder
         # paths that don't need it.
-        from transformers import ViTModel
+        import inspect
+
+        from transformers import AutoModel
 
         self.num_components = num_components
         self.image_size = image_size
         self.latent_dim = latent_dim
         self.freeze_backbone = freeze_backbone
 
-        self.backbone = ViTModel.from_pretrained(
-            dino_model_name, add_pooling_layer=False
-        )
-        feat_dim = self.backbone.config.hidden_size
-        patch_size = self.backbone.config.patch_size
+        # AutoModel covers both DINO v1 (ViTModel) and DINOv3 (DINOv3ViTModel)
+        # and any future variants registered in transformers.
+        self.backbone = AutoModel.from_pretrained(dino_model_name)
+        bb_cfg = self.backbone.config
+        feat_dim = bb_cfg.hidden_size
+        patch_size = bb_cfg.patch_size
         if image_size % patch_size != 0:
             raise ValueError(
                 f"image_size {image_size} must be divisible by DINO patch_size "
@@ -286,6 +289,19 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
             )
         feat_size = image_size // patch_size
         self.feat_size = feat_size
+
+        # Patch tokens are prefixed by CLS plus optional register tokens
+        # (DINOv3 has num_register_tokens=4; DINO v1 has none).
+        self.num_special_tokens = 1 + (getattr(bb_cfg, "num_register_tokens", 0) or 0)
+
+        # DINO v1 / ViT needs interpolate_pos_encoding=True at non-pretrained
+        # resolutions (absolute pos embed interpolation). DINOv3 uses RoPE and
+        # doesn't accept the kwarg -- detect from the signature instead of
+        # hard-coding per-architecture.
+        self._uses_interpolate_pos = (
+            "interpolate_pos_encoding"
+            in inspect.signature(self.backbone.forward).parameters
+        )
 
         if freeze_backbone:
             self.backbone.requires_grad_(False)
@@ -331,12 +347,15 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
         # Convert to [0,1] then to ImageNet stats.
         img_01 = x * 0.5 + 0.5
         x_in = (img_01 - self.imagenet_mean.to(x.dtype)) / self.imagenet_std.to(x.dtype)
-        # interpolate_pos_encoding=True: DINO ViT-S/8 was pretrained at 224
-        # (28x28 patches); we typically run at 128 (16x16 patches), so the
-        # positional embeddings must be interpolated to the new grid.
-        out = self.backbone(pixel_values=x_in, interpolate_pos_encoding=True)
-        # Drop CLS token -> [B, num_patches, feat_dim].
-        return out.last_hidden_state[:, 1:, :]
+        kwargs = {"pixel_values": x_in}
+        if self._uses_interpolate_pos:
+            # DINO ViT was pretrained at 224 with absolute pos embeddings;
+            # interpolate to the run resolution. RoPE-based DINOv3 doesn't
+            # take this kwarg and handles arbitrary sizes natively.
+            kwargs["interpolate_pos_encoding"] = True
+        out = self.backbone(**kwargs)
+        # Drop CLS (+ register tokens for DINOv3) -> [B, num_patches, feat_dim].
+        return out.last_hidden_state[:, self.num_special_tokens :, :]
 
     def forward(self, x, return_attn=False):
         if self.freeze_backbone:

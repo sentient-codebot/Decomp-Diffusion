@@ -120,8 +120,16 @@ slot-attention encoder (not only the CNN one).
   differs. Slurm job 23117268 (train+eval, 4x H100); script
   `jobs/movi_e_dino_slot_train_eval.sh`; output `results/movi-e_dino_slot/`;
   report (on completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.
-  DINOv3 follow-up run pending HF gated-access approval (per user
-  conversation 2026-05-26).
+- 2026-05-26 — DINOv3 follow-up. `DinoSlotAttentionEncoder` extended to
+  auto-detect register tokens and whether the backbone takes
+  `interpolate_pos_encoding` (DINOv3 uses RoPE, no such kwarg; CLS + 4
+  register tokens dropped). Run at 256 resolution so patch_size=16 gives the
+  same 16x16 patch grid as the v1 / CNN runs at 128. Effective batch dropped
+  to 32 (4 GPU x 8) to fit the 4x larger UNet input; walltime 48h. Slurm
+  job: see `jobs/movi_e_dinov3_slot_train_eval.sh`; config
+  `configs/movi-e/dinov3_slot_encoder/config.json`; output
+  `results/movi-e_dinov3_slot/`; report (on completion)
+  `docs/experiments/2026-05-26-movi-e-dinov3-slot-attention.md`.
 
 ## Slot attention: register slots
 
