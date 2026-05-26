@@ -907,6 +907,7 @@ class ComposableStableDiffusionPipeline(
         clip_skip: int | None = None,
         callback_on_step_end: Callable[[int, int, dict], None] | None = None,
         callback_on_step_end_tensor_inputs: list[str] = ["latents"],
+        num_registers: int = 0,
         **kwargs,
     ):
         r"""
@@ -1046,7 +1047,7 @@ class ComposableStableDiffusionPipeline(
             prompt,
             device,
             num_images_per_prompt,
-            self.do_classifier_free_guidance,
+            False,
             negative_prompt,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
@@ -1054,11 +1055,17 @@ class ComposableStableDiffusionPipeline(
             clip_skip=self.clip_skip,
         )
 
-        # For classifier free guidance, we need to do two forward passes.
-        # Here we concatenate the unconditional and text embeddings into a single batch
-        # to avoid doing two forward passes
-        if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+        # Compositional CFG: registers (last `num_registers` tokens of
+        # prompt_embeds) act as the principled unconditional context. The
+        # legacy negative-prompt CFG branch is no longer used.
+        K = prompt_embeds.shape[1] - num_registers
+        if K < 1:
+            raise ValueError(
+                f"num_registers={num_registers} >= prompt_embeds tokens "
+                f"({prompt_embeds.shape[1]}); need at least one slot."
+            )
+        slots = prompt_embeds[:, :K]  # [B, K, D]
+        registers = prompt_embeds[:, K:] if num_registers > 0 else None
 
         if ip_adapter_image is not None:
             output_hidden_state = (
@@ -1066,11 +1073,9 @@ class ComposableStableDiffusionPipeline(
                 if isinstance(self.unet.encoder_hid_proj, ImageProjection)
                 else True
             )
-            image_embeds, negative_image_embeds = self.encode_image(
+            image_embeds, _ = self.encode_image(
                 ip_adapter_image, device, num_images_per_prompt, output_hidden_state
             )
-            if self.do_classifier_free_guidance:
-                image_embeds = torch.cat([negative_image_embeds, image_embeds])
 
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
@@ -1109,9 +1114,9 @@ class ComposableStableDiffusionPipeline(
             ).to(device=device, dtype=latents.dtype)
 
         # 7. Denoising loop
-        weights = torch.tensor(
-            [guidance_scale] * prompt_embeds.shape[1], device=self.device
-        ).reshape(-1, 1, 1, 1)
+        # Compositional CFG temperature: cfg_scale=1 reproduces the training
+        # objective at inference; >1 amplifies each slot's contribution.
+        cfg_scale = guidance_scale
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1119,55 +1124,45 @@ class ComposableStableDiffusionPipeline(
                 if self.interrupt:
                     continue
 
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = self.scheduler.scale_model_input(latents, t)
 
-                # predict the noise residual
-                """noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep_cond=timestep_cond,
-                    cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]"""
+                # Per-slot conditional epsilons: [slot_k, registers].
+                eps_slots_sum = None
+                for k in range(K):
+                    cond_k = slots[:, k : k + 1, :]
+                    if registers is not None:
+                        cond_k = torch.cat([cond_k, registers], dim=1)
+                    eps_k = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=cond_k,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                    eps_slots_sum = eps_k if eps_slots_sum is None else eps_slots_sum + eps_k
 
-                noise_pred = []
-                for j in range(prompt_embeds.shape[1]):
-                    noise_pred.append(
-                        self.unet(
-                            latent_model_input,
-                            t,
-                            encoder_hidden_states=prompt_embeds[:, j, :].unsqueeze(1),
-                            timestep_cond=timestep_cond,
-                            cross_attention_kwargs=self.cross_attention_kwargs,
-                            added_cond_kwargs=added_cond_kwargs,
-                            return_dict=False,
-                        )[0].unsqueeze(1)
-                    )
-                noise_pred = torch.cat(noise_pred, dim=1).mean(dim=1)
+                if registers is not None:
+                    eps_uncond = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=registers,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                    noise_pred = (1 - cfg_scale * K) * eps_uncond + cfg_scale * eps_slots_sum
+                else:
+                    # R == 0 fallback: sum of per-slot epsilons (matches training).
+                    noise_pred = cfg_scale * eps_slots_sum
 
-                # perform guidance
-                if self.do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    # noise_pred_uncond, noise_pred_text = noise_pred[:1], noise_pred[1:]
-                    noise_pred = noise_pred_uncond + (
-                        weights * (noise_pred_text - noise_pred_uncond)
-                    ).sum(dim=0, keepdims=True)
-
-                if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+                if self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                     noise_pred = rescale_noise_cfg(
                         noise_pred,
-                        noise_pred_text,
+                        eps_slots_sum,
                         guidance_rescale=self.guidance_rescale,
                     )
 

@@ -8,5 +8,6 @@
   "latent_dim": 64,
   "encode_depth": 3,
   "slot_iters": 3,
-  "slot_hidden_dim": 128
+  "slot_hidden_dim": 128,
+  "num_registers": 0
 }

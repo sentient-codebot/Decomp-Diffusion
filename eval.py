@@ -245,14 +245,25 @@ def main(args):
         )
 
         with torch.autocast("cuda"):
-            slots = latent_encoder(pixel_values)  # for the time dimension
+            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
+            K = latent_encoder.num_components
+            R = getattr(latent_encoder, "num_registers", 0)
+            slots = slot_tokens[:, :K]
+            registers = slot_tokens[:, K:] if R > 0 else None
 
             # one generation per slot, then the full reconstruction from all slots
+            per_slot_embeds = [
+                slots[:, s : s + 1, :]
+                if registers is None
+                else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
+                for s in range(K)
+            ]
             per_slot_images = [
                 pipeline(
-                    prompt_embeds=slots[:, s, :]
-                    .unsqueeze(1)
-                    .to(device=accelerator.device, dtype=weight_dtype),
+                    prompt_embeds=embeds.to(
+                        device=accelerator.device, dtype=weight_dtype
+                    ),
+                    num_registers=R,
                     height=args.resolution,
                     width=args.resolution,
                     num_inference_steps=25,
@@ -260,11 +271,12 @@ def main(args):
                     guidance_scale=1.0,
                     output_type="pt",
                 ).images
-                for s in range(slots.shape[1])
+                for embeds in per_slot_embeds
             ]
 
             images_recon = pipeline(
-                prompt_embeds=slots,
+                prompt_embeds=slot_tokens,
+                num_registers=R,
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,

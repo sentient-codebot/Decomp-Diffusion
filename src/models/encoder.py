@@ -172,9 +172,11 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
     embedding, flattened to a token sequence, projected to ``latent_dim`` and
     bound into ``num_components`` slots by iterative attention.
 
-    Drop-in for ``LatentEncoder``: ``forward`` returns ``[B, num_components,
-    latent_dim]`` slots, with ``latent_dim`` matching the UNet cross-attention
-    dim. This is the canonical Latent Slot Diffusion pattern.
+    With ``num_registers > 0``, ``num_registers`` data-independent learned
+    register tokens are appended after the slots, so ``forward`` returns
+    ``[B, num_components + num_registers, latent_dim]`` -- slots first, then
+    registers. Registers serve as the principled unconditional / null context
+    for the compositional denoising objective in ``train_lsd.py``.
     """
 
     @register_to_config
@@ -188,9 +190,11 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
         encode_depth=3,
         slot_iters=3,
         slot_hidden_dim=128,
+        num_registers=0,
     ):
         super().__init__()
         self.num_components = num_components
+        self.num_registers = num_registers
         self.image_size = image_size
         self.latent_dim = latent_dim
 
@@ -219,6 +223,12 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
             hidden_dim=slot_hidden_dim,
         )
 
+        if num_registers > 0:
+            self.registers = nn.Parameter(torch.empty(1, num_registers, latent_dim))
+            nn.init.xavier_uniform_(self.registers)
+        else:
+            self.registers = None
+
     def forward(self, x, return_attn=False):
         features = self.cnn(x)  # [B, C, h, w]
         h, w = features.shape[-2:]
@@ -230,19 +240,32 @@ class SlotAttentionEncoder(ModelMixin, ConfigMixin):
             slots, attn = self.slot_attention(features, return_attn=True)
             # [B, K, N] -> [B, K, h, w] soft segmentation at feature map res.
             attn = attn.reshape(attn.shape[0], attn.shape[1], h, w)
+            slots = self._append_registers(slots)
             return slots, attn
         slots = self.slot_attention(features)  # [B, num_components, latent_dim]
-        return slots
+        return self._append_registers(slots)
+
+    def _append_registers(self, slots):
+        if self.registers is None:
+            return slots
+        regs = self.registers.expand(slots.shape[0], -1, -1).to(
+            dtype=slots.dtype, device=slots.device
+        )
+        return torch.cat([slots, regs], dim=1)
 
 
 class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
     """Slot Attention encoder with a pretrained DINO ViT feature extractor.
 
-    Drop-in for ``SlotAttentionEncoder`` -- same ``[B, num_components,
-    latent_dim]`` output, same ``return_attn`` API -- but the trained-from-scratch
-    CNN front end is replaced by a pretrained DINO ViT (Caron et al., 2021).
-    Patch tokens (CLS dropped) form the feature map fed into the same soft
-    positional embedding + Slot Attention read-out.
+    Drop-in for ``SlotAttentionEncoder`` -- same output contract, same
+    ``return_attn`` API -- but the trained-from-scratch CNN front end is
+    replaced by a pretrained DINO ViT (Caron et al., 2021). Patch tokens
+    (CLS dropped) form the feature map fed into the same soft positional
+    embedding + Slot Attention read-out.
+
+    With ``num_registers > 0``, learned register tokens are appended after the
+    slots, so ``forward`` returns ``[B, num_components + num_registers,
+    latent_dim]`` -- slots first, then registers.
 
     DINO is frozen by default: it already provides strong self-supervised
     per-patch features, so only the slot-attention head learns. Set
@@ -262,6 +285,7 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
         slot_iters=3,
         slot_hidden_dim=128,
         freeze_backbone=True,
+        num_registers=0,
     ):
         super().__init__()
         # Local import: keeps the top-level import of this module fast and
@@ -272,6 +296,7 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
         from transformers import AutoModel
 
         self.num_components = num_components
+        self.num_registers = num_registers
         self.image_size = image_size
         self.latent_dim = latent_dim
         self.freeze_backbone = freeze_backbone
@@ -334,6 +359,12 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
             hidden_dim=slot_hidden_dim,
         )
 
+        if num_registers > 0:
+            self.registers = nn.Parameter(torch.empty(1, num_registers, latent_dim))
+            nn.init.xavier_uniform_(self.registers)
+        else:
+            self.registers = None
+
     def train(self, mode=True):
         super().train(mode)
         if self.freeze_backbone:
@@ -374,9 +405,18 @@ class DinoSlotAttentionEncoder(ModelMixin, ConfigMixin):
         if return_attn:
             slots, attn = self.slot_attention(features, return_attn=True)
             attn = attn.reshape(attn.shape[0], attn.shape[1], h, w)
+            slots = self._append_registers(slots)
             return slots, attn
         slots = self.slot_attention(features)
-        return slots
+        return self._append_registers(slots)
+
+    def _append_registers(self, slots):
+        if self.registers is None:
+            return slots
+        regs = self.registers.expand(slots.shape[0], -1, -1).to(
+            dtype=slots.dtype, device=slots.device
+        )
+        return torch.cat([slots, regs], dim=1)
 
 
 # --- Encoder selection -------------------------------------------------------

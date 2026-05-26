@@ -127,14 +127,25 @@ def log_validation(
             model_input = vae.encode(pixel_values).latent_dist.sample()
             pixel_values_recon = vae.decode(model_input).sample
 
-            slots = latent_encoder(pixel_values)  # for the time dimension
+            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
+            K = latent_encoder.num_components
+            R = getattr(latent_encoder, "num_registers", 0)
+            slots = slot_tokens[:, :K]
+            registers = slot_tokens[:, K:] if R > 0 else None
 
             # one generation per slot, then the full reconstruction from all slots
+            per_slot_embeds = [
+                slots[:, s : s + 1, :]
+                if registers is None
+                else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
+                for s in range(K)
+            ]
             per_slot_images = [
                 pipeline(
-                    prompt_embeds=slots[:, s, :]
-                    .unsqueeze(1)
-                    .to(device=accelerator.device, dtype=weight_dtype),
+                    prompt_embeds=embeds.to(
+                        device=accelerator.device, dtype=weight_dtype
+                    ),
+                    num_registers=R,
                     height=args.resolution,
                     width=args.resolution,
                     num_inference_steps=25,
@@ -142,11 +153,12 @@ def log_validation(
                     guidance_scale=1.0,
                     output_type="pt",
                 ).images
-                for s in range(slots.shape[1])
+                for embeds in per_slot_embeds
             ]
 
             images_recon = pipeline(
-                prompt_embeds=slots,
+                prompt_embeds=slot_tokens,
+                num_registers=R,
                 height=args.resolution,
                 width=args.resolution,
                 num_inference_steps=25,
@@ -598,37 +610,57 @@ def main(args):
             # (this is the forward diffusion process)
             noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
 
-            slots = latent_encoder(pixel_values)  # for the time dimension
+            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
 
             if not train_unet:
-                slots = slots.to(dtype=weight_dtype)
+                slot_tokens = slot_tokens.to(dtype=weight_dtype)
 
-            noisy_model_input = noisy_model_input[:, None, :].expand(
-                -1, slots.shape[1], -1, -1, -1
-            )
-            timesteps = timesteps[:, None].expand(-1, slots.shape[1])
+            # Split slot output into slots and learned registers. Encoders
+            # produce slots first, registers (if any) last.
+            K = latent_encoder.num_components
+            R = getattr(latent_encoder, "num_registers", 0)
+            slots = slot_tokens[:, :K]  # [B, K, D]
+            registers = slot_tokens[:, K:] if R > 0 else None  # [B, R, D] or None
 
-            noisy_model_input = torch.flatten(noisy_model_input, 0, 1)
-            timesteps = torch.flatten(timesteps, 0, 1)
-            slots = torch.flatten(slots, 0, 1)
+            # Conditional pass: for each slot k, condition on [slot_k, registers].
+            # Vectorise across k by flattening the slot dim into the batch dim.
+            B = pixel_values.shape[0]
+            slot_cond = slots.unsqueeze(2)  # [B, K, 1, D]
+            if R > 0:
+                regs_exp = registers.unsqueeze(1).expand(-1, K, -1, -1)  # [B, K, R, D]
+                slot_cond = torch.cat([slot_cond, regs_exp], dim=2)  # [B, K, 1+R, D]
+            cond = slot_cond.flatten(0, 1)  # [B*K, 1+R, D]
 
-            # model_pred = torch.zeros_like(noisy_model_input)
-            # Predict the noise residual
-            # for i in range(slots.shape[1]):
-            # model_pred = model_pred + unet(noisy_model_input, timesteps, slots[:,i,:].unsqueeze(1),).sample
-            model_pred = unet(
-                noisy_model_input,
-                timesteps,
-                slots.unsqueeze(1),
+            noisy_expanded = noisy_model_input[:, None].expand(-1, K, -1, -1, -1)
+            timesteps_expanded = timesteps[:, None].expand(-1, K)
+            noisy_expanded = noisy_expanded.flatten(0, 1)  # [B*K, C, H, W]
+            timesteps_expanded = timesteps_expanded.flatten(0, 1)  # [B*K]
+
+            eps_slots = unet(
+                noisy_expanded,
+                timesteps_expanded,
+                cond,
             ).sample
+            eps_slots = eps_slots.view(
+                B,
+                K,
+                noisy_expanded.shape[1],
+                noisy_expanded.shape[2],
+                noisy_expanded.shape[3],
+            )  # [B, K, C, H, W]
 
-            model_pred = model_pred.view(
-                pixel_values.shape[0],
-                -1,
-                noisy_model_input.shape[1],
-                noisy_model_input.shape[2],
-                noisy_model_input.shape[3],
-            ).mean(dim=1)
+            if R > 0:
+                # Unconditional pass: condition on registers only.
+                eps_uncond = unet(
+                    noisy_model_input,
+                    timesteps,
+                    registers,
+                ).sample  # [B, C, H, W]
+                model_pred = (1 - K) * eps_uncond + eps_slots.sum(dim=1)
+            else:
+                # R == 0 fallback: sum of per-slot epsilons (no uncond term).
+                # NOTE: differs from prior mean aggregation by a factor of K.
+                model_pred = eps_slots.sum(dim=1)
 
             # Get the target for loss depending on the prediction type
             if noise_scheduler.config.prediction_type == "epsilon":
