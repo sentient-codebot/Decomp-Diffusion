@@ -30,9 +30,16 @@ from PIL import Image
 from torchvision.utils import make_grid
 from tqdm.auto import tqdm
 
-from src.data.dataset import GlobDataset
+from src.data.dataset import GlobDataset, MoviPairDataset
+from src.metrics.segmentation import (
+    per_image_fg_ari,
+    per_image_mbo,
+    per_image_miou,
+)
 from src.models.encoder import (
     LATENT_ENCODER_CLASSES,
+    DinoSlotAttentionEncoder,
+    SlotAttentionEncoder,
     build_latent_encoder,
 )
 from src.parser import parse_args
@@ -45,6 +52,8 @@ if is_wandb_available():
     import wandb
 
 logger = get_logger(__name__)
+
+SLOT_ATTN_ENCODER_CLASSES = (SlotAttentionEncoder, DinoSlotAttentionEncoder)
 
 
 def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
@@ -89,6 +98,7 @@ def log_validation(
     accelerator,
     weight_dtype,
     global_step,
+    movi_eval_dataset=None,
 ):
     logger.info("Running validation... \n.")
     unet = accelerator.unwrap_model(unet)
@@ -289,9 +299,7 @@ def log_validation(
                 raise ValueError(
                     f"Unknown prediction type {noise_scheduler.config.prediction_type}"
                 )
-            val_losses.append(
-                F.mse_loss(model_pred.float(), target.float()).item()
-            )
+            val_losses.append(F.mse_loss(model_pred.float(), target.float()).item())
 
             slots = slot_tokens[:, :K].float()
             slots_n = F.normalize(slots, dim=-1)
@@ -300,7 +308,50 @@ def log_validation(
             slot_cos_sims.append(sim[:, ~eye].mean().item())
 
     val_loss = sum(val_losses) / len(val_losses) if val_losses else float("nan")
-    slot_cos = sum(slot_cos_sims) / len(slot_cos_sims) if slot_cos_sims else float("nan")
+    slot_cos = (
+        sum(slot_cos_sims) / len(slot_cos_sims) if slot_cos_sims else float("nan")
+    )
+
+    # --- Object-discovery metrics (MOVi-E only, when GT seg + slot-attn encoder)
+    fg_ari = mbo = miou = None
+    if movi_eval_dataset is not None and isinstance(
+        latent_encoder, SLOT_ATTN_ENCODER_CLASSES
+    ):
+        seg_loader = torch.utils.data.DataLoader(
+            movi_eval_dataset,
+            batch_size=args.val_batch_size,
+            shuffle=False,
+            num_workers=args.dataloader_num_workers,
+        )
+        aris, mbos, mious = [], [], []
+        for batch in seg_loader:
+            pixel_values = batch["pixel_values"].to(
+                device=accelerator.device, dtype=weight_dtype
+            )
+            gt = batch["segment"].to(device=accelerator.device)
+            _, attn = latent_encoder(pixel_values, return_attn=True)
+            attn_up = F.interpolate(
+                attn.float(),
+                size=(args.resolution, args.resolution),
+                mode="bilinear",
+                align_corners=False,
+            )
+            pred_mask = attn_up.argmax(dim=1)
+            for b in range(pred_mask.shape[0]):
+                gt_np = gt[b].cpu().numpy()
+                pred_np = pred_mask[b].cpu().numpy()
+                a = per_image_fg_ari(gt_np, pred_np)
+                m = per_image_mbo(gt_np, pred_np)
+                u = per_image_miou(gt_np, pred_np, ignore_background=False)
+                if a is not None:
+                    aris.append(a)
+                if m is not None:
+                    mbos.append(m)
+                if u is not None:
+                    mious.append(u)
+        fg_ari = float(np.mean(aris)) if aris else float("nan")
+        mbo = float(np.mean(mbos)) if mbos else float("nan")
+        miou = float(np.mean(mious)) if mious else float("nan")
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -310,20 +361,26 @@ def log_validation(
             )
             tracker.writer.add_scalar("val_loss", val_loss, global_step)
             tracker.writer.add_scalar("slot_pairwise_cos", slot_cos, global_step)
+            if fg_ari is not None:
+                tracker.writer.add_scalar("val/fg_ari", fg_ari, global_step)
+                tracker.writer.add_scalar("val/mbo", mbo, global_step)
+                tracker.writer.add_scalar("val/miou", miou, global_step)
         if tracker.name == "wandb":
             # Step is implicit -- wandb merges into the current internal step,
             # which tracks `global_step` via the per-step accelerator.log()
             # call in the training loop.
-            tracker.log(
-                {
-                    "validation": [
-                        wandb.Image(image, caption=f"{i}")
-                        for i, image in enumerate(images)
-                    ],
-                    "val_loss": val_loss,
-                    "slot_pairwise_cos": slot_cos,
-                }
-            )
+            wandb_log = {
+                "validation": [
+                    wandb.Image(image, caption=f"{i}") for i, image in enumerate(images)
+                ],
+                "val_loss": val_loss,
+                "slot_pairwise_cos": slot_cos,
+            }
+            if fg_ari is not None:
+                wandb_log["val/fg_ari"] = fg_ari
+                wandb_log["val/mbo"] = mbo
+                wandb_log["val/miou"] = miou
+            tracker.log(wandb_log)
     torch.cuda.empty_cache()
 
     return images
@@ -577,6 +634,18 @@ def main(args):
             1.0,
         ),
     )
+
+    # Optional MOVi-E (image, GT segment) dataset for training-time
+    # object-discovery metrics. Only built when the flag is set; the segmentation
+    # eval inside log_validation also requires a slot-attention encoder.
+    movi_eval_dataset = None
+    if args.movi_eval_root is not None:
+        movi_eval_dataset = MoviPairDataset(
+            root=args.movi_eval_root,
+            split=args.movi_eval_split,
+            img_size=args.resolution,
+            max_images=args.movi_eval_max_images,
+        )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -850,6 +919,7 @@ def main(args):
                             accelerator=accelerator,
                             weight_dtype=weight_dtype,
                             global_step=global_step,
+                            movi_eval_dataset=movi_eval_dataset,
                         )
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}

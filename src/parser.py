@@ -336,6 +336,30 @@ def parse_args(input_args=None):
         help="Whether to flip the image horizontally in training.",
     )
     parser.add_argument(
+        "--movi_eval_root",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to a MOVi-E dump root (containing "
+            "`movi-e-{split}-with-label/{images,labels}/`). When set and the "
+            "encoder exposes slot attention masks, val/fg_ari, val/mbo, "
+            "val/miou are logged each validation step. Off by default so "
+            "non-MOVi-E runs are unaffected."
+        ),
+    )
+    parser.add_argument(
+        "--movi_eval_split",
+        type=str,
+        default="validation",
+        choices=["train", "validation", "test"],
+    )
+    parser.add_argument(
+        "--movi_eval_max_images",
+        type=int,
+        default=256,
+        help="Cap on frames used for in-training segmentation metrics.",
+    )
+    parser.add_argument(
         "--train_split_portion",
         type=float,
         default=0.9,
