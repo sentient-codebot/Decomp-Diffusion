@@ -47,6 +47,37 @@ if is_wandb_available():
 logger = get_logger(__name__)
 
 
+def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
+    """Compose an epsilon prediction from slot tokens.
+
+    With R > 0: sum-of-deltas with the learned register slots as the
+    unconditional context, i.e. ``(1 - K) * eps_uncond + sum_k eps_slot_k``
+    where ``eps_slot_k`` conditions on ``[slot_k, registers]`` and
+    ``eps_uncond`` conditions on ``registers`` only. With R == 0 this falls
+    back to a plain sum of per-slot epsilons (see TECHDEBT).
+    """
+    B = noisy_model_input.shape[0]
+    slots = slot_tokens[:, :K]
+    registers = slot_tokens[:, K:] if R > 0 else None
+
+    slot_cond = slots.unsqueeze(2)  # [B, K, 1, D]
+    if R > 0:
+        regs_exp = registers.unsqueeze(1).expand(-1, K, -1, -1)  # [B, K, R, D]
+        slot_cond = torch.cat([slot_cond, regs_exp], dim=2)  # [B, K, 1+R, D]
+    cond = slot_cond.flatten(0, 1)  # [B*K, 1+R, D]
+
+    noisy_expanded = noisy_model_input[:, None].expand(-1, K, -1, -1, -1).flatten(0, 1)
+    timesteps_expanded = timesteps[:, None].expand(-1, K).flatten(0, 1)
+
+    eps_slots = unet(noisy_expanded, timesteps_expanded, cond).sample
+    eps_slots = eps_slots.view(B, K, *eps_slots.shape[1:])  # [B, K, C, H, W]
+
+    if R > 0:
+        eps_uncond = unet(noisy_model_input, timesteps, registers).sample
+        return (1 - K) * eps_uncond + eps_slots.sum(dim=1)
+    return eps_slots.sum(dim=1)
+
+
 @torch.no_grad()
 def log_validation(
     val_dataset,
@@ -69,6 +100,11 @@ def log_validation(
         shuffle=False,
         num_workers=args.dataloader_num_workers,
     )
+
+    # Hold on to the training (DDPM) scheduler for the val-loss computation
+    # below; only the image-generation pipeline swaps to a faster inference
+    # scheduler.
+    noise_scheduler = scheduler
 
     # We train on the simplified learning objective. If we were previously predicting a variance, we need the scheduler to ignore it
     scheduler_args = {}
@@ -198,19 +234,94 @@ def log_validation(
         if image_count >= args.num_validation_images:
             break
 
+    # --- Scalar validation metrics ------------------------------------------
+    # Cheap single-step diffusion loss on val batches, using the same
+    # compose_eps composition as training. Also logs the mean off-diagonal
+    # pairwise cosine similarity of object slots -- a diagnostic for slot
+    # collapse (high values => slots are redundant).
+    K = latent_encoder.num_components
+    R = getattr(latent_encoder, "num_registers", 0)
+    metric_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=args.val_batch_size,
+        shuffle=False,
+        num_workers=args.dataloader_num_workers,
+    )
+    num_metric_batches = max(1, args.num_validation_images // args.val_batch_size)
+    metric_seed = args.seed if args.seed is not None else 0
+    metric_generator = torch.Generator(device=accelerator.device).manual_seed(
+        metric_seed + global_step
+    )
+    val_losses = []
+    slot_cos_sims = []
+    for i, batch in enumerate(metric_loader):
+        if i >= num_metric_batches:
+            break
+        pixel_values = batch["pixel_values"].to(
+            device=accelerator.device, dtype=weight_dtype
+        )
+        with torch.autocast("cuda"):
+            model_input = vae.encode(pixel_values).latent_dist.sample()
+            model_input = model_input * vae.config.scaling_factor
+            noise = torch.randn(
+                model_input.shape,
+                generator=metric_generator,
+                device=accelerator.device,
+                dtype=model_input.dtype,
+            )
+            timesteps = torch.randint(
+                0,
+                noise_scheduler.config.num_train_timesteps,
+                (pixel_values.shape[0],),
+                generator=metric_generator,
+                device=accelerator.device,
+            ).long()
+            noisy = noise_scheduler.add_noise(model_input, noise, timesteps)
+
+            slot_tokens = latent_encoder(pixel_values)
+            model_pred = compose_eps(unet, noisy, timesteps, slot_tokens, K, R)
+
+            if noise_scheduler.config.prediction_type == "epsilon":
+                target = noise
+            elif noise_scheduler.config.prediction_type == "v_prediction":
+                target = noise_scheduler.get_velocity(model_input, noise, timesteps)
+            else:
+                raise ValueError(
+                    f"Unknown prediction type {noise_scheduler.config.prediction_type}"
+                )
+            val_losses.append(
+                F.mse_loss(model_pred.float(), target.float()).item()
+            )
+
+            slots = slot_tokens[:, :K].float()
+            slots_n = F.normalize(slots, dim=-1)
+            sim = torch.einsum("bkd,bjd->bkj", slots_n, slots_n)
+            eye = torch.eye(K, device=slots.device, dtype=torch.bool)
+            slot_cos_sims.append(sim[:, ~eye].mean().item())
+
+    val_loss = sum(val_losses) / len(val_losses) if val_losses else float("nan")
+    slot_cos = sum(slot_cos_sims) / len(slot_cos_sims) if slot_cos_sims else float("nan")
+
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             np_images = np.stack([np.asarray(img) for img in images])
             tracker.writer.add_images(
                 "validation", np_images, global_step, dataformats="NHWC"
             )
+            tracker.writer.add_scalar("val_loss", val_loss, global_step)
+            tracker.writer.add_scalar("slot_pairwise_cos", slot_cos, global_step)
         if tracker.name == "wandb":
+            # Step is implicit -- wandb merges into the current internal step,
+            # which tracks `global_step` via the per-step accelerator.log()
+            # call in the training loop.
             tracker.log(
                 {
                     "validation": [
                         wandb.Image(image, caption=f"{i}")
                         for i, image in enumerate(images)
-                    ]
+                    ],
+                    "val_loss": val_loss,
+                    "slot_pairwise_cos": slot_cos,
                 }
             )
     torch.cuda.empty_cache()
@@ -615,52 +726,11 @@ def main(args):
             if not train_unet:
                 slot_tokens = slot_tokens.to(dtype=weight_dtype)
 
-            # Split slot output into slots and learned registers. Encoders
-            # produce slots first, registers (if any) last.
             K = latent_encoder.num_components
             R = getattr(latent_encoder, "num_registers", 0)
-            slots = slot_tokens[:, :K]  # [B, K, D]
-            registers = slot_tokens[:, K:] if R > 0 else None  # [B, R, D] or None
-
-            # Conditional pass: for each slot k, condition on [slot_k, registers].
-            # Vectorise across k by flattening the slot dim into the batch dim.
-            B = pixel_values.shape[0]
-            slot_cond = slots.unsqueeze(2)  # [B, K, 1, D]
-            if R > 0:
-                regs_exp = registers.unsqueeze(1).expand(-1, K, -1, -1)  # [B, K, R, D]
-                slot_cond = torch.cat([slot_cond, regs_exp], dim=2)  # [B, K, 1+R, D]
-            cond = slot_cond.flatten(0, 1)  # [B*K, 1+R, D]
-
-            noisy_expanded = noisy_model_input[:, None].expand(-1, K, -1, -1, -1)
-            timesteps_expanded = timesteps[:, None].expand(-1, K)
-            noisy_expanded = noisy_expanded.flatten(0, 1)  # [B*K, C, H, W]
-            timesteps_expanded = timesteps_expanded.flatten(0, 1)  # [B*K]
-
-            eps_slots = unet(
-                noisy_expanded,
-                timesteps_expanded,
-                cond,
-            ).sample
-            eps_slots = eps_slots.view(
-                B,
-                K,
-                noisy_expanded.shape[1],
-                noisy_expanded.shape[2],
-                noisy_expanded.shape[3],
-            )  # [B, K, C, H, W]
-
-            if R > 0:
-                # Unconditional pass: condition on registers only.
-                eps_uncond = unet(
-                    noisy_model_input,
-                    timesteps,
-                    registers,
-                ).sample  # [B, C, H, W]
-                model_pred = (1 - K) * eps_uncond + eps_slots.sum(dim=1)
-            else:
-                # R == 0 fallback: sum of per-slot epsilons (no uncond term).
-                # NOTE: differs from prior mean aggregation by a factor of K.
-                model_pred = eps_slots.sum(dim=1)
+            model_pred = compose_eps(
+                unet, noisy_model_input, timesteps, slot_tokens, K, R
+            )
 
             # Get the target for loss depending on the prediction type
             if noise_scheduler.config.prediction_type == "epsilon":

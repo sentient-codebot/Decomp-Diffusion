@@ -8,5 +8,5 @@
   "slot_iters": 3,
   "slot_hidden_dim": 128,
   "freeze_backbone": true,
-  "num_registers": 0
+  "num_registers": 4
 }

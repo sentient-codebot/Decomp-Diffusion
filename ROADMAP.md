@@ -120,6 +120,8 @@ slot-attention encoder (not only the CNN one).
   differs. Slurm job 23117268 (train+eval, 4x H100); script
   `jobs/movi_e_dino_slot_train_eval.sh`; output `results/movi-e_dino_slot/`;
   report (on completion) `docs/experiments/2026-05-26-movi-e-dino-slot-attention.md`.
+  **Cancelled mid-run** in favour of the register-slot follow-up (see below);
+  intermediate checkpoint remains on disk for qualitative comparison.
 - 2026-05-26 — DINOv3 follow-up. `DinoSlotAttentionEncoder` extended to
   auto-detect register tokens and whether the backbone takes
   `interpolate_pos_encoding` (DINOv3 uses RoPE, no such kwarg; CLS + 4
@@ -134,6 +136,10 @@ slot-attention encoder (not only the CNN one).
   `configs/movi-e/dinov3_slot_encoder/config.json`; output
   `results/movi-e_dinov3_slot/`; report (on completion)
   `docs/experiments/2026-05-26-movi-e-dinov3-slot-attention.md`.
+  **Cancelled mid-run** at ~2h44 once the mean-aggregation loss path was
+  retired in favour of register-based sum-of-deltas (90108cb); intermediate
+  results in `results/movi-e_dinov3_slot/` are kept for qualitative comparison
+  but loss/decomposition trajectories aren't comparable to the new objective.
 
 ## Slot attention: register slots
 
@@ -159,3 +165,56 @@ configs (`SlotAttentionEncoder` and `DinoSlotAttentionEncoder`). Keep the
 no-register path (R=0) as default so the change is opt-in and existing runs
 stay comparable. First test on MOVi-E with the DINO backbone, since that's
 where slot binding is measurable via FG-ARI / mBO.
+
+**Done:** registers are now data-independent learned tokens appended *after*
+slot attention (not extra slot queries inside it) — see commit 90108cb.
+Both `SlotAttentionEncoder` and `DinoSlotAttentionEncoder` accept
+`num_registers`. Training composes the epsilon as
+`(1 - K) * eps_uncond + sum_k eps_slot_k` where `eps_uncond` conditions on
+the registers only and each `eps_slot_k` conditions on `[slot_k, registers]`
+(see `compose_eps` in `train_lsd.py`). This replaces the prior mean
+aggregation, which was redundancy-collapse prone.
+
+**Runs:**
+- 2026-05-26 — DINOv3 + R=4 register slots, MOVi-E 200k-step run. Same
+  backbone / resolution / step budget as the cancelled no-register DINOv3
+  run, only `num_registers` (0 -> 4) and the loss (mean -> sum-of-deltas)
+  change. Script `jobs/movi_e_dinov3_registers_train_eval.sh`; config
+  `configs/movi-e/dinov3_slot_encoder/config.json`; output
+  `results/movi-e_dinov3_reg/`; report (on completion)
+  `docs/experiments/2026-05-26-movi-e-dinov3-registers.md`. Also adds
+  `val_loss` and `slot_pairwise_cos` (mean off-diagonal pairwise cosine sim of
+  object slots, a collapse diagnostic) to wandb logging at every validation
+  step.
+
+## Object-centric representation metrics (planned)
+
+**Goal:** broaden evaluation beyond per-component decoding grids and the
+single FG-ARI / mBO check, so we can spot decomposition failures (slot
+collapse, slot-to-object mis-binding, slot-redundancy) from numbers rather
+than only by eyeballing grids — and so we can stop weighting individual
+component decoding as the primary signal it currently is.
+
+**Candidates to evaluate / add (no need to do this immediately):**
+- *Slot-collapse diagnostics:* mean off-diagonal slot pairwise cosine
+  similarity (already added to wandb in this branch) and slot-norm spread.
+  Cheap, log every validation step.
+- *Attention-mask metrics:* slot attention entropy (per slot, averaged over
+  the image) and a Hungarian-matched per-object IoU on the slot attention
+  masks against the GT instance masks (mBO already does the closest thing
+  but at decoded-component resolution).
+- *Slot purity / object-completeness* over the GT segments
+  (Engelcke et al. / Greff et al. style).
+- *Representational metrics on the slot vectors:* probe each slot for the
+  per-object MOVi-E attributes shipped with the dump
+  (`labels/*_labels.json` already has bbox / shape / material / color /
+  3d-coords); a linear probe accuracy on object slots ~ "is the slot
+  identifiable as a single object" without needing image decoding.
+- *Decoder-free reconstruction proxies:* DINO-feature reconstruction MSE per
+  slot (DINOSAUR-style), evaluable without paying the diffusion sampling
+  cost.
+
+These should be wired into `eval_movi.py` (full-validation pass) and a
+subset into `train_lsd.py`'s `log_validation` (per-step wandb scalars), so
+that "did the slots decompose?" is answerable from the wandb dashboard mid
+training, not only post-hoc.
