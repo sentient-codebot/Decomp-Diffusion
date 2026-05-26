@@ -587,6 +587,14 @@ def main(args):
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
+    # Cache slot / register counts before DDP-wrapping the encoder -- the
+    # DistributedDataParallel wrapper only proxies forward(), not custom
+    # attributes, so `latent_encoder.num_components` would AttributeError once
+    # prepared. Reading these from the raw module is also conceptually right:
+    # they're per-run constants, not per-step state.
+    num_components = latent_encoder.num_components
+    num_registers = getattr(latent_encoder, "num_registers", 0)
+
     # Prepare everything with our `accelerator`.
     latent_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         latent_encoder, optimizer, train_dataloader, lr_scheduler
@@ -726,10 +734,13 @@ def main(args):
             if not train_unet:
                 slot_tokens = slot_tokens.to(dtype=weight_dtype)
 
-            K = latent_encoder.num_components
-            R = getattr(latent_encoder, "num_registers", 0)
             model_pred = compose_eps(
-                unet, noisy_model_input, timesteps, slot_tokens, K, R
+                unet,
+                noisy_model_input,
+                timesteps,
+                slot_tokens,
+                num_components,
+                num_registers,
             )
 
             # Get the target for loss depending on the prediction type
