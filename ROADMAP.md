@@ -126,7 +126,7 @@ slot-attention encoder (not only the CNN one).
   register tokens dropped). Run at 256 resolution so patch_size=16 gives the
   same 16x16 patch grid as the v1 / CNN runs at 128. Effective batch dropped
   to 32 (4 GPU x 8) to fit the 4x larger UNet input; walltime 48h. Slurm
-  job: see `jobs/movi_e_dinov3_slot_train_eval.sh`; config
+  job 23117941; script `jobs/movi_e_dinov3_slot_train_eval.sh`; config
   `configs/movi-e/dinov3_slot_encoder/config.json`; output
   `results/movi-e_dinov3_slot/`; report (on completion)
   `docs/experiments/2026-05-26-movi-e-dinov3-slot-attention.md`.
