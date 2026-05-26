@@ -9,10 +9,15 @@
 # while letting us use DINOv3's stronger dense features.
 #
 # Resolution change cascades: VAE encodes 256 -> 32x32 latents (vs 16x16 at
-# 128), so each UNet forward is ~4x heavier than the v1 run. Per-GPU batch
-# is dropped from 16 to 8 to fit in 80 GB H100 memory, keeping effective
-# batch 32 (half the v1 run's 64). Walltime is bumped to 48h to absorb the
-# slower steps.
+# 128), so each UNet forward is ~4x heavier than the v1 run.
+#
+# Running on 2x A100 (40 GB) instead of 4x H100 because the H100 budget is
+# tied up by the v1 run reservation; A100 is cheaper per GPU-hour and the
+# remaining SBU budget fits a 24h slot here. Per-GPU batch is 8 -> effective
+# batch 16 (vs 64 in the v1 run; slot attention is robust to lower batch).
+# Step count stays at 200k -- single 24h slot likely won't finish at A100
+# throughput, so the restart-safe --resume_from_checkpoint latest path will
+# carry it over multiple submissions.
 #
 # Depends on data laid down by jobs/movi_e_preprocess.sh
 # (~/prjs0993/datasets/movi-e/).
@@ -25,9 +30,9 @@
 #
 # Submit from the repo root: `sbatch jobs/movi_e_dinov3_slot_train_eval.sh`.
 #SBATCH --job-name="movi-e-dinov3-slot-200k"
-#SBATCH --partition=gpu_h100
-#SBATCH --gpus=4
-#SBATCH --time=48:00:00
+#SBATCH --partition=gpu_a100
+#SBATCH --gpus=2
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm_%j.log
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=n.lin@tudelft.nl
@@ -75,10 +80,10 @@ export NCCL_TIMEOUT=1800
 
 START=$(date +%s)
 
-# --- 1. Train (DDP, 4 GPU -- no srun) ----------------------------------------
-# --train_batch_size $PER_GPU_BATCH over 4 GPUs -> effective batch 32.
+# --- 1. Train (DDP, 2 GPU -- no srun) ----------------------------------------
+# --train_batch_size $PER_GPU_BATCH over 2 GPUs -> effective batch 16.
 # --resolution overrides the train_config default (128) to 256.
-uv run accelerate launch --multi_gpu --num_processes=4 --mixed_precision fp16 \
+uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision fp16 \
     --main_process_port 29501 train_lsd.py \
     --train_config configs/movi-e/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -226,7 +231,7 @@ cat > "$REPORT" <<EOF
 **Status:** $OVERALL
 **Date:** $(date -u +%Y-%m-%dT%H:%MZ)
 **Slurm job:** ${SLURM_JOB_ID:-N/A} (script: jobs/movi_e_dinov3_slot_train_eval.sh, log: slurm_${SLURM_JOB_ID}.log)
-**Node / GPUs:** ${SLURM_JOB_NODELIST:-N/A}, 4x H100
+**Node / GPUs:** ${SLURM_JOB_NODELIST:-N/A}, 2x A100
 **wandb run:** $WANDB_URL
 
 ## Purpose
@@ -248,7 +253,7 @@ baseline and the DINO v1 run.
 | Special tokens dropped | 5 (1 CLS + 4 register) |
 | Slot Attention iters | 3 |
 | Steps run | $MAX_STEPS / 200000 configured |
-| Effective batch | 32 (4 GPU x $PER_GPU_BATCH) |
+| Effective batch | 16 (2 GPU x $PER_GPU_BATCH) |
 | Resolution | 256 |
 | Slots (num_components) | 11 |
 | Slot dim (latent_dim) | 64 |
