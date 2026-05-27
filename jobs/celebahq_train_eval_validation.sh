@@ -41,7 +41,7 @@ START=$(date +%s)
 # --- 1. Train (DDP, 2 GPU -- no srun) -----------------------------------------
 # --resume_from_checkpoint latest makes the job restart-safe: a resubmission
 # after a timeout picks up the most recent checkpoint instead of starting over.
-uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision fp16 \
+uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
     --main_process_port 29500 train_lsd.py \
     --train_config configs/celebahq/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -70,7 +70,7 @@ echo "[validation] using checkpoint: ${CKPT:-<none found>}"
 EVAL_START=$(date +%s)
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 32 --num_validation_images 32 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
@@ -121,7 +121,7 @@ is a pipeline validation, not a converged model: it runs 50k of the
 | Effective batch | 64 (2 GPU x 32) |
 | Resolution | 128 |
 | Slots (num_components) | 4 |
-| Mixed precision | fp16 |
+| Mixed precision | bf16 |
 | Learning rate | 2.0e-5 |
 | Output dir | $RUN_DIR/ |
 

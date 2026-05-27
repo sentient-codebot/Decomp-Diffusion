@@ -73,7 +73,7 @@ START=$(date +%s)
 
 # --- 1. Train (DDP, 4 GPU -- no srun) ----------------------------------------
 # --train_batch_size 16 over 4 GPUs -> effective batch 64.
-uv run accelerate launch --multi_gpu --num_processes=4 --mixed_precision fp16 \
+uv run accelerate launch --multi_gpu --num_processes=4 --mixed_precision bf16 \
     --main_process_port 29500 train_lsd.py \
     --train_config configs/movi-e/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -103,7 +103,7 @@ echo "[movi-e-run] using checkpoint: ${CKPT:-<none found>}"
 EVAL_START=$(date +%s)
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 16 --num_validation_images 16 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
@@ -250,7 +250,7 @@ compared against the dumped GT instance segmentations.
 | Resolution | 128 |
 | Slots (num_components) | 11 |
 | Slot dim (latent_dim) | 64 |
-| Mixed precision | fp16 |
+| Mixed precision | bf16 |
 | Learning rate | 2.0e-5 |
 | Dataset | MOVi-E train split ($TRAIN_N frames) |
 | Eval split | MOVi-E validation split ($VAL_N frames) |

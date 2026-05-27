@@ -45,7 +45,7 @@ mkdir -p "$(dirname "$REPORT")"
 START=$(date +%s)
 
 # --- 1. Train (DDP, 2 GPU -- no srun) -----------------------------------------
-uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision fp16 \
+uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
     --main_process_port 29500 train_lsd.py \
     --train_config configs/celebahq/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -74,7 +74,7 @@ echo "[full-run] using checkpoint: ${CKPT:-<none found>}"
 EVAL_START=$(date +%s)
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 32 --num_validation_images 32 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/celebahq/scheduler/scheduler_config.json \
@@ -126,7 +126,7 @@ that the planned encoder + slot-attention version is compared against.
 | Effective batch | 64 (2 GPU x 32) |
 | Resolution | 128 |
 | Slots (num_components) | 4 |
-| Mixed precision | fp16 |
+| Mixed precision | bf16 |
 | Learning rate | 2.0e-5 |
 | Output dir | $RUN_DIR/latent_decomposed_diffusion/ |
 

@@ -24,7 +24,7 @@ export HF_HOME="$HOME/prjs0993/Decomp-Diffusion/cache/huggingface"
 source .venv/bin/activate
 uv sync --extra wandb --extra tensorboard --extra xformers
 
-uv run accelerate launch --num_processes=1 --mixed_precision fp16 \
+uv run accelerate launch --num_processes=1 --mixed_precision bf16 \
     --main_process_port 29501 train_lsd.py \
     --train_config configs/celebahq/train_config.yaml \
     --output_dir results/celebahq_smoketest/ \

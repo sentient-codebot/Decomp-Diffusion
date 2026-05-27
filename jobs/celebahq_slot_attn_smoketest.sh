@@ -37,7 +37,7 @@ RUN_DIR=results/celebahq_slot_smoketest
 rm -rf image_test_output "$RUN_DIR"
 
 # --- Train (single GPU, 12 steps) --------------------------------------------
-uv run accelerate launch --num_processes=1 --mixed_precision fp16 \
+uv run accelerate launch --num_processes=1 --mixed_precision bf16 \
     --main_process_port 29503 train_lsd.py \
     --train_config configs/celebahq/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -59,7 +59,7 @@ echo "[slot-smoke] checkpoint: ${CKPT:-<none found>}"
 # --- Eval (single GPU) -------------------------------------------------------
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 8 --num_validation_images 8 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/celebahq/scheduler/scheduler_config.json \

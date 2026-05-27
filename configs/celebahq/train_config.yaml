@@ -29,7 +29,7 @@ checkpointing_steps: 25000
 checkpoints_total_limit: 2
 
 # --- runtime ---
-mixed_precision: fp16
+mixed_precision: bf16
 enable_xformers_memory_efficient_attention: true
 
 # --- logging ---

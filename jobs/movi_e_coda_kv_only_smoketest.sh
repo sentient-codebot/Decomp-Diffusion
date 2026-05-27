@@ -46,7 +46,7 @@ fi
 
 # --- 1. Train (single GPU, 12 steps, checkpoint at step 12) ------------------
 # validation_steps=6 exercises log_validation halfway through.
-uv run accelerate launch --num_processes=1 --mixed_precision fp16 \
+uv run accelerate launch --num_processes=1 --mixed_precision bf16 \
     --main_process_port 29504 train_lsd.py \
     --train_config configs/movi-e/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -70,7 +70,7 @@ echo "[coda-smoke] checkpoint: ${CKPT:-<none found>}"
 if [ -n "$CKPT" ]; then
     # Resume from the step-12 checkpoint and run 4 more steps; this catches a
     # silent regression where K/V weren't actually saved.
-    uv run accelerate launch --num_processes=1 --mixed_precision fp16 \
+    uv run accelerate launch --num_processes=1 --mixed_precision bf16 \
         --main_process_port 29504 train_lsd.py \
         --train_config configs/movi-e/train_config.yaml \
         --output_dir "$RUN_DIR/" \
@@ -95,7 +95,7 @@ echo "**************** [coda-smoke] resume finished (rc=$RESUME_RC). ***********
 CKPT=$(find "$RUN_DIR" -maxdepth 2 -type d -name 'checkpoint-*' 2>/dev/null | sort -t- -k2 -n | tail -n1)
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 4 --num_validation_images 4 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/movi-e/scheduler/scheduler_config.json \

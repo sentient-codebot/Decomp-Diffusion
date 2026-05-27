@@ -83,7 +83,7 @@ START=$(date +%s)
 # Per-step UNet work is K=24 forwards with a (1+R)=5 long cross-attn sequence.
 # Scheduler config path is required by argparse but ignored: train_lsd.py
 # loads SD2.1's own DDPM scheduler when --unet_config=pretrain_sd.
-uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision fp16 \
+uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
     --main_process_port 29501 train_lsd.py \
     --train_config configs/movi-e/train_config.yaml \
     --output_dir "$RUN_DIR/" \
@@ -113,7 +113,7 @@ echo "[movi-e-coda] using checkpoint: ${CKPT:-<none found>}"
 EVAL_START=$(date +%s)
 if [ -n "$CKPT" ]; then
     uv run accelerate launch --num_processes=1 eval.py \
-        --mixed_precision fp16 --seed 42 \
+        --mixed_precision bf16 --seed 42 \
         --batch_size 8 --num_validation_images 16 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
@@ -303,7 +303,7 @@ prior pushes the encoder to learn better object-level representations.
 | Steps run | $MAX_STEPS / 200000 configured |
 | Effective batch | 16 (2 GPU x $PER_GPU_BATCH) |
 | Resolution | 256 (32x32 latent vs SD2.1's native 64x64) |
-| Mixed precision | fp16 |
+| Mixed precision | bf16 |
 | Learning rate | 2.0e-5 |
 | Dataset | MOVi-E train split ($TRAIN_N frames) |
 | Eval split | MOVi-E validation split ($VAL_N frames) |
