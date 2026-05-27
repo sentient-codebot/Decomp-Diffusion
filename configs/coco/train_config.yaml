@@ -1,0 +1,47 @@
+# Training hyperparameters for the COCO experiment.
+#
+# Loaded by train_lsd.py via `--train_config`. Values here act as argparse
+# defaults; any flag passed on the `accelerate launch` command line overrides
+# them. Run/machine-specific paths (output_dir, dataset_root, dataset_glob and
+# the model component config paths) are intentionally NOT here -- pass those
+# on the command line (see jobs/coco_coda_kv_only_train.sh).
+#
+# Mirrors configs/movi-e/train_config.yaml. Differences:
+# - COCO has ~118k train images (vs ~96k MOVi-E frames) and no preprocessed
+#   ground-truth segmentation pipeline yet, so movi_eval_root is unset.
+# - train_split_portion=1.0 -- COCO ships its own val split, so use the full
+#   train2017 directory for training.
+# - Default encoder is the K=7 register-slot DinoSlotAttentionEncoder
+#   (configs/coco/dinov3_slot_encoder_d1024), matching CoDA's MOVi-E recipe
+#   on the latent-dim side. K=7 is a placeholder COCO-appropriate object
+#   count; revise based on collapse diagnostics from the first run.
+
+# --- optimization ---
+learning_rate: 2.0e-5            # base LR; encoder LR = learning_rate * encoder_lr_scale
+encoder_lr_scale: 1.0
+gradient_accumulation_steps: 1
+max_train_steps: 200000
+seed: 42
+
+# --- data loading ---
+resolution: 256
+train_batch_size: 16
+train_split_portion: 1.0          # COCO ships its own val/test splits
+dataloader_num_workers: 8
+
+# --- validation ---
+val_batch_size: 16
+num_validation_images: 16
+validation_steps: 5000
+
+# --- checkpointing ---
+checkpointing_steps: 20000
+checkpoints_total_limit: 2
+
+# --- runtime ---
+mixed_precision: bf16
+allow_tf32: true
+enable_xformers_memory_efficient_attention: false  # SDPA -> FlashAttention-3 on H100
+
+# --- logging ---
+tracker_project_name: latent_decomposed_diffusion

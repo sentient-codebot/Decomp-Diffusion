@@ -414,19 +414,38 @@ score is the headline number — it tests whether the decoder can render
 unseen slot combinations, which is what "compositional generation"
 actually means.
 
-**Target dataset: COCO.** Not implemented in this codebase yet — needs a
-COCO loader (`GlobDataset` reads pixels only and currently powers the
-celebahq / MOVi-E paths). Before this section can be moved to "done":
+**Target dataset: COCO.** Training-side loader landed; eval-side (masks,
+FID/KID) is still open.
 
-- Add a `CocoDataset` (instance masks for the slot-discovery side, raw
-  pixels for the generation side).
-- Add `configs/coco/` mirroring `configs/movi-e/`.
+**Done (training side):**
+- `configs/coco/` mirrors `configs/movi-e/` with K=7 / R=4 /
+  latent_dim=1024 (CoDA-style K/V-only recipe on SD2.1).
+- COCO data downloads to `~/prjs0993/datasets/coco/` via
+  `jobs/coco_download.sh` (mirrors sony/coda's `preprocess/download.sh`
+  layout: `images/{train2017,val2017}` + `annotations/`).
+- `jobs/coco_smoketest.sh` validates the wiring with a synthetic
+  16-JPG dataset before the real download is needed.
+- `jobs/coco_coda_kv_only_train.sh` runs the 200k-step training job on
+  the downloaded COCO train2017 (~118k JPGs). Pixels are read via the
+  existing `GlobDataset` — sony/coda also uses a plain image glob for
+  the training side, so no new dataset class is needed yet.
+
+**Still open before this section is "done":**
+- `CocoDataset` for mask/annotation-aware eval (instance masks from
+  pycocotools, mirroring sony/coda's `COCO2017Dataset`).
 - Wire FID/KID via `cleanfid` or `torchmetrics.image`; add the dep behind
   an extra in `pyproject.toml`.
 - Compositional sampling: assemble cross-batch slot mixtures (e.g. roll
   slot indices across the batch dim) before the pipeline call — the
   pipeline already accepts arbitrary `prompt_embeds` per
   `src/pipeline/composable_stable_diffusion_pipeline.py`.
+
+**Runs:**
+- 2026-05-27 — COCO CoDA-style K/V-only 200k-step train job (Slurm id
+  TBD, script `jobs/coco_coda_kv_only_train.sh`; config
+  `configs/coco/dinov3_slot_encoder_d1024/config.json`; output
+  `results/coco_coda_kv_only/`; report target
+  `docs/experiments/2026-05-27-coco-coda-kv-only.md`).
 
 ## VOC support (planned)
 
