@@ -320,6 +320,22 @@ gain over plain register slots.
 - Contrastive / InfoNCE on slots across images, treating "same slot index
   across images" as not-positive — discourages the model from collapsing
   slots to a fixed image-independent set of attractors.
+- **CoDA-style contrastive alignment loss:** form "mismatched" slot sets by
+  replacing a subset of an image's slots with slots from another image, run
+  the denoiser on the mismatched set, and *maximise* the MSE between the
+  correct noise and the noise predicted from the mismatched slots. The
+  symmetric counterpart to the diffusion MSE: matched slots must predict the
+  noise, mismatched slots must fail to. See the CoDA paper for the exact
+  mixing recipe (which subset, how many, sampling strategy).
+- **Denoiser cross-attention entropy penalty:** in the UNet's cross-attention
+  to slots, each image patch produces a distribution over the K slots. Use
+  the entropy of that distribution as a regulariser to discourage patches
+  from attending to all slots uniformly (no slot specialisation) — i.e.
+  penalise high per-patch entropy. The dual view (per-slot distribution over
+  patches) is also informative: a slot attending uniformly over the image is
+  the collapse mode we want to penalise. Both directions are cheap to log
+  before being used as a loss. The slot-attention attention scores at the
+  encoder side admit the same treatment and are worth considering in tandem.
 
 **Where it lives:** the loss term goes alongside the diffusion MSE in
 `train_lsd.py`'s training loop; weighting controlled by a new hyperparameter
