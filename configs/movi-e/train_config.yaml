@@ -21,7 +21,7 @@ seed: 42
 resolution: 128
 train_batch_size: 32
 train_split_portion: 1.0          # MOVi-E ships its own val/test splits; use the full train split
-dataloader_num_workers: 4
+dataloader_num_workers: 8
 
 # --- validation ---
 val_batch_size: 32
