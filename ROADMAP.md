@@ -348,13 +348,19 @@ bind into. This landed as `--freeze_unet_except_kv` in `train_lsd.py`, so
 existing runs stay reproducible.
 
 - 2026-05-27 — MOVi-E CoDA-style K/V-only 200k-step train+eval job launched:
-  Slurm job `23139442`; script `jobs/movi_e_coda_kv_only_train_eval.sh`;
-  log `/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_23139442.log`; config
+  Slurm job `23146118`; script `jobs/movi_e_coda_kv_only_train_eval.sh`;
+  log `/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_23146118.log`; config
   `configs/movi-e/dinov3_slot_encoder_d1024/config.json`; output
   `results/movi-e_coda_kv_only/`; report target
-  `docs/experiments/2026-05-27-movi-e-coda-kv-only.md`. Uses the current
-  simple-sum objective (`eps = sum_k eps_slot_k`) with registers concatenated
-  to each slot's conditioning sequence.
+  `docs/experiments/2026-05-27-movi-e-coda-kv-only.md`. Uses the
+  mean-of-eps objective (`eps = mean_k eps_slot_k`) with registers
+  concatenated to each slot's conditioning sequence. An earlier attempt
+  (Slurm `23139442`) used the sum objective and was cancelled at ~3h /
+  step 20000: with a mostly-frozen pretrained UNet, asking each per-slot
+  eps to be ~noise/K so that the sum matches one noise is incompatible
+  with the pretrained output scale and not learnable through K/V alone.
+  Aborted checkpoints archived at
+  `results/movi-e_coda_kv_only_sum_aborted_20260527T134321Z/`.
 
 **DiT backbone, e.g. SD3 (out of scope for this paper, exploratory).** Same
 training-surface question but with a transformer denoiser: SD3 / similar

@@ -8,8 +8,11 @@
 #   - Slot encoder: DinoSlotAttentionEncoder with latent_dim=1024 (matches
 #     SD2.1 cross_attention_dim). Slot-attention head is trained; DINOv3
 #     backbone stays frozen as before.
-#   - Loss: same sum-of-eps composition (eps = sum_k eps_slot_k) used in the
-#     registers run, so FG-ARI / mBO are directly comparable.
+#   - Loss: mean-of-eps composition (eps = mean_k eps_slot_k). Mean (not
+#     sum) keeps each per-slot eps on a unit-noise scale, which is required
+#     for a mostly-frozen pretrained denoiser to stay in its trained output
+#     regime. Previous runs with summed eps inflated targets by ~K and asked
+#     the frozen UNet to predict ~noise/K per slot -- mostly unlearnable.
 #
 # Motivation: study how slot representations evolve when the denoiser is a
 # fixed strong prior. All gradient pressure flows through K/V into the

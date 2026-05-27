@@ -3,12 +3,6 @@
 Known shortcuts, divergences, and deferred fixes. Add an entry when you discover or
 introduce debt; remove it when resolved. For longer-term direction see `ROADMAP.md`.
 
-## Denoising target changed from mean to sum
-
-The training composition is `eps_pred = sum_k eps_slot_k` (in both `train_lsd.py` and `composable_stable_diffusion_pipeline.py`) rather than the previous `mean_k eps_slot_k`. The sum form is the simplest compositional objective and matches the original Decomp-Diffusion paper; the mean form silently rescales the target by `1/K`. Registers (when present) are still concatenated to each slot's conditioning sequence, but there is no separate registers-only forward / `(1 - K) * eps_uncond` term -- that earlier sum-of-deltas variant was dropped because the per-slot decode it implied was underdetermined (see chat history 2026-05-26).
-
-**Implication:** existing checkpoints trained under the old mean aggregation or the sum-of-deltas variant are NOT inference-compatible with the current pipeline; re-train rather than mixing.
-
 ## UNet positional embedding silently dropped
 
 `configs/celebahq/unet/config.json` declares `_class_name: "UNet2DConditionModelWithPos"` and `pos_type: "cartesian"`, but `train_lsd.py` and `eval.py` construct a plain `diffusers.UNet2DConditionModel` via `from_config`. `from_config` ignores the unknown `pos_type` key (logged at startup as an ignored config attribute), so the cartesian positional embedding is never applied. `UNet2DConditionModelWithPos` (`src/models/unet_with_pos.py`) is not imported anywhere.
