@@ -304,6 +304,14 @@ def parse_args(input_args=None):
         required=True,
     )
     parser.add_argument(
+        "--freeze_unet_except_kv",
+        action="store_true",
+        help=(
+            "Only valid with --unet_config pretrain_sd. Keep the pretrained UNet "
+            "frozen except for cross-attention to_k / to_v projections (CoDA-style)."
+        ),
+    )
+    parser.add_argument(
         "--scheduler_config",
         type=str,
         default=None,

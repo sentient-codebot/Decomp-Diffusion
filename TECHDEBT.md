@@ -59,3 +59,9 @@ When comparing the register-slot results in this repo against Nguyen et al. 2026
 So even with matching K and the same architectural shape, this repo's slots have ~12x less capacity (64 vs 768) and operate on a 4x coarser feature grid. Their results are not a fair upper bound for what we should expect at our current settings -- any large gap in FG-ARI / mBO should first be attributed to capacity / resolution before concluding the method itself is the bottleneck.
 
 **Fix:** before chasing SOTA numbers, raise `latent_dim` (64 -> 256 or 768), increase the feature grid (use a smaller patch / higher input resolution so the ViT produces a 32 x 32 grid), and switch to frozen-CLIP register priors. Until then, document this gap in every comparison report.
+
+## CoDA K/V warm-started from CLIP-text projections
+
+The `--freeze_unet_except_kv` mode (`jobs/movi_e_coda_kv_only_train_eval.sh`) freezes the SD 2.1 UNet and trains only cross-attention `to_k` / `to_v`. Those projections were pretrained on CLIP-text embeddings, which live in a totally different distribution than the DINOv3 slot tokens we feed them. Reusing them as a warm start is a deliberate convenience -- they're the right shape and presumed-better-than-random -- not a principled choice. The slot-token K/V subspace may have nothing useful in common with the text K/V subspace, in which case the warm start is wasted (or worse: a worse-than-random init biased toward text-like decoding).
+
+**Fix / follow-up:** add a re-init ablation (Kaiming or zero-init the K/V before training) and compare against the warm-start variant. Until that is run, treat the warm-start choice as load-bearing and re-flag this in the experiment report.

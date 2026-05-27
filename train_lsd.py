@@ -56,6 +56,36 @@ logger = get_logger(__name__)
 SLOT_ATTN_ENCODER_CLASSES = (SlotAttentionEncoder, DinoSlotAttentionEncoder)
 
 
+def _unfreeze_cross_attn_kv(unet):
+    """Re-enable grads on cross-attention to_k / to_v of a frozen UNet.
+
+    Walks every transformer block under down_blocks / mid_block / up_blocks
+    and flips ``requires_grad=True`` on ``attn2.to_k`` and ``attn2.to_v``
+    only. Self-attention (``attn1``), Q, and to_out stay frozen. Returns the
+    flat list of unfrozen parameters so the caller can hand them to the
+    optimizer.
+    """
+    kv_params = []
+
+    def visit(blocks):
+        for block in blocks:
+            attentions = getattr(block, "attentions", None)
+            if attentions is None:
+                continue
+            for attn in attentions:
+                for tblock in attn.transformer_blocks:
+                    attn2 = tblock.attn2
+                    for proj in (attn2.to_k, attn2.to_v):
+                        for p in proj.parameters():
+                            p.requires_grad_(True)
+                            kv_params.append(p)
+
+    visit(unet.down_blocks)
+    visit([unet.mid_block])
+    visit(unet.up_blocks)
+    return kv_params
+
+
 def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
     """Compose an epsilon prediction by summing per-slot epsilons.
 
@@ -505,8 +535,26 @@ def main(args):
     accelerator.register_load_state_pre_hook(load_model_hook)
 
     vae.requires_grad_(False)
+    kv_params = []
     if not train_unet:
         unet.requires_grad_(False)
+        if args.freeze_unet_except_kv:
+            kv_params = _unfreeze_cross_attn_kv(unet)
+            kv_param_count = sum(p.numel() for p in kv_params)
+            logger.info(
+                f"freeze_unet_except_kv: re-enabled {len(kv_params)} cross-attn "
+                f"to_k/to_v tensors ({kv_param_count:,} params) on a frozen UNet."
+            )
+    elif args.freeze_unet_except_kv:
+        raise ValueError(
+            "--freeze_unet_except_kv only makes sense with a frozen pretrained "
+            "UNet; pass --unet_config pretrain_sd alongside it."
+        )
+
+    # True when any UNet params are trainable -- both full-train and the K/V-only
+    # mode. Drives whether the UNet is handed to accelerator.prepare, kept in
+    # fp32, set to .train(), etc.
+    unet_optimized = train_unet or args.freeze_unet_except_kv
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -532,7 +580,7 @@ def main(args):
         " doing mixed precision training. copy of the weights should still be float32."
     )
 
-    if train_unet and accelerator.unwrap_model(unet).dtype != torch.float32:
+    if unet_optimized and accelerator.unwrap_model(unet).dtype != torch.float32:
         raise ValueError(
             f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
         )
@@ -568,17 +616,22 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    params_to_optimize = list(latent_encoder.parameters()) + (
-        list(unet.parameters()) if train_unet else []
-    )
+    if train_unet:
+        unet_params = list(unet.parameters())
+    elif args.freeze_unet_except_kv:
+        unet_params = kv_params
+    else:
+        unet_params = []
+
+    params_to_optimize = list(latent_encoder.parameters()) + unet_params
     params_group = [
         {
             "params": list(latent_encoder.parameters()),
             "lr": args.learning_rate * args.encoder_lr_scale,
         }
     ]
-    if train_unet:
-        params_group.append({"params": unet.parameters(), "lr": args.learning_rate})
+    if unet_params:
+        params_group.append({"params": unet_params, "lr": args.learning_rate})
 
     optimizer = optimizer_class(
         params_group,
@@ -605,7 +658,8 @@ def main(args):
         )"""
 
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lr_lambda=[lambda _: 1, lambda _: 1] if train_unet else [lambda _: 1]
+        optimizer,
+        lr_lambda=[lambda _: 1, lambda _: 1] if unet_optimized else [lambda _: 1],
     )
 
     train_dataset = GlobDataset(
@@ -668,7 +722,7 @@ def main(args):
         latent_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
-    if train_unet:
+    if unet_optimized:
         unet = accelerator.prepare(unet)
 
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
@@ -681,7 +735,7 @@ def main(args):
 
     # Move vae device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
-    if not train_unet:
+    if not unet_optimized:
         unet.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -762,7 +816,7 @@ def main(args):
     )
 
     for epoch in range(first_epoch, args.num_train_epochs):
-        if train_unet:
+        if unet_optimized:
             unet.train()
         latent_encoder.train()
         for step, batch in enumerate(train_dataloader):
@@ -799,7 +853,7 @@ def main(args):
 
             slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
 
-            if not train_unet:
+            if not unet_optimized:
                 slot_tokens = slot_tokens.to(dtype=weight_dtype)
 
             model_pred = compose_eps(
