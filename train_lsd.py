@@ -56,6 +56,11 @@ logger = get_logger(__name__)
 SLOT_ATTN_ENCODER_CLASSES = (SlotAttentionEncoder, DinoSlotAttentionEncoder)
 
 
+def unwrap_model_for_type_checks(accelerator, model):
+    """Remove distributed and torch.compile wrappers before class-specific logic."""
+    return accelerator.unwrap_model(model, keep_torch_compile=False)
+
+
 def _unfreeze_cross_attn_kv(unet):
     """Re-enable grads on cross-attention to_k / to_v of a frozen UNet.
 
@@ -130,6 +135,7 @@ def log_validation(
     logger.info("Running validation... \n.")
     unet = accelerator.unwrap_model(unet)
     latent_encoder = accelerator.unwrap_model(latent_encoder)
+    latent_encoder_type = unwrap_model_for_type_checks(accelerator, latent_encoder)
 
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
@@ -201,8 +207,8 @@ def log_validation(
             pixel_values_recon = vae.decode(model_input).sample
 
             slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
-            K = latent_encoder.num_components
-            R = getattr(latent_encoder, "num_registers", 0)
+            K = latent_encoder_type.num_components
+            R = getattr(latent_encoder_type, "num_registers", 0)
             slots = slot_tokens[:, :K]
             registers = slot_tokens[:, K:] if R > 0 else None
 
@@ -280,8 +286,8 @@ def log_validation(
     # compose_eps composition as training. Also logs the mean off-diagonal
     # pairwise cosine similarity of object slots -- a diagnostic for slot
     # collapse (high values => slots are redundant).
-    K = latent_encoder.num_components
-    R = getattr(latent_encoder, "num_registers", 0)
+    K = latent_encoder_type.num_components
+    R = getattr(latent_encoder_type, "num_registers", 0)
     metric_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.val_batch_size,
@@ -346,7 +352,7 @@ def log_validation(
     # --- Object-discovery metrics (MOVi-E only, when GT seg + slot-attn encoder)
     fg_ari = mbo = miou = None
     if movi_eval_dataset is not None and isinstance(
-        latent_encoder, SLOT_ATTN_ENCODER_CLASSES
+        latent_encoder_type, SLOT_ATTN_ENCODER_CLASSES
     ):
         seg_loader = torch.utils.data.DataLoader(
             movi_eval_dataset,
@@ -499,6 +505,7 @@ def main(args):
     def save_model_hook(models, weights, output_dir):
         if accelerator.is_main_process:
             for model in models:
+                model = unwrap_model_for_type_checks(accelerator, model)
                 # continue if not a latent encoder or the UNet
                 if not isinstance(
                     model, LATENT_ENCODER_CLASSES + (UNet2DConditionModel,)
@@ -516,6 +523,7 @@ def main(args):
         while len(models) > 0:
             # pop models so that they are not loaded again
             model = models.pop()
+            model = unwrap_model_for_type_checks(accelerator, model)
 
             sub_dir = model._get_name().lower()
 
