@@ -18,8 +18,8 @@ dependencies = [
     "pillow>=9.3",
     "pyyaml>=6.0",
     "scikit-learn>=1.3",
-    "torch>=2.5,<2.7",
-    "torchvision>=0.20,<0.22",
+    "torch>=2.7,<2.8",
+    "torchvision>=0.22,<0.23",
     "tqdm>=4.66",
     # cap <5 to keep the transformers v4 API the code was written against.
     "transformers>=4.34,<5.0",
@@ -48,10 +48,10 @@ link-mode = "symlink"
 constraint-dependencies = ["setuptools<81"]
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
