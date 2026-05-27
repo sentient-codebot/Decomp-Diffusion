@@ -338,15 +338,23 @@ train the full SD 2.1 UNet plus the encoder; the encoder is what should be
 doing the object-centric work, so paying for full UNet gradients is mostly
 inertia from the original LSD recipe.
 
-**Train only the cross-attention projections (in scope, future run).** Match
-Sony CoDA's setup on MOVi-E: freeze the UNet and only train the cross-attn
-K / V / out projections (`.attn2.to_k.`, `.attn2.to_v.`, `.attn2.to_out.`)
-plus the encoder. Same backbone (SD 2.1), same step budget, same encoder —
-the comparison is purely about how much decoder capacity the slot
-conditioning needs to bind into. Land it as a flag on `train_lsd.py` that
-toggles between full-UNet and projections-only param groups, so existing
-runs stay reproducible. Worth pairing with CoDA's other cheap hygiene
-items (CFG dropout, short LR warmup) if we want a clean head-to-head.
+**Train only the cross-attention K/V projections (in scope, queued run).**
+Match the lightweight side of Sony CoDA's setup on MOVi-E: freeze the SD 2.1
+UNet and only train cross-attn K / V projections (`.attn2.to_k.`,
+`.attn2.to_v.`) plus the encoder. Same dataset, step budget, and
+DINOv3+register-slot encoder family as the current full-UNet run; the
+comparison is about how much decoder capacity the slot conditioning needs to
+bind into. This landed as `--freeze_unet_except_kv` in `train_lsd.py`, so
+existing runs stay reproducible.
+
+- 2026-05-27 — MOVi-E CoDA-style K/V-only 200k-step train+eval job launched:
+  Slurm job `23139442`; script `jobs/movi_e_coda_kv_only_train_eval.sh`;
+  log `/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_23139442.log`; config
+  `configs/movi-e/dinov3_slot_encoder_d1024/config.json`; output
+  `results/movi-e_coda_kv_only/`; report target
+  `docs/experiments/2026-05-27-movi-e-coda-kv-only.md`. Uses the current
+  simple-sum objective (`eps = sum_k eps_slot_k`) with registers concatenated
+  to each slot's conditioning sequence.
 
 **DiT backbone, e.g. SD3 (out of scope for this paper, exploratory).** Same
 training-surface question but with a transformer denoiser: SD3 / similar
