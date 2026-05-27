@@ -43,6 +43,9 @@ cd ~/projects/Decomp-Diffusion
 # weights live in HF_HOME.
 export HF_HOME="$HOME/prjs0993/Decomp-Diffusion/cache/huggingface"
 export WANDB_DIR="$HOME/prjs0993/Decomp-Diffusion/wandb"
+# Persistent torch.compile / inductor cache (shared across projects). Set in
+# ~/.bashrc too, but sbatch may not re-source bashrc, so we belt-and-suspender.
+export TORCHINDUCTOR_CACHE_DIR="$HOME/prjs0993/tmp/torchinductor"
 source .venv/bin/activate
 uv sync --extra wandb --extra tensorboard --extra xformers
 
@@ -84,6 +87,7 @@ START=$(date +%s)
 # Scheduler config path is required by argparse but ignored: train_lsd.py
 # loads SD2.1's own DDPM scheduler when --unet_config=pretrain_sd.
 uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
+    --dynamo_backend=inductor \
     --main_process_port 29501 train_lsd.py \
     --train_config configs/movi-e/train_config.yaml \
     --output_dir "$RUN_DIR/" \
