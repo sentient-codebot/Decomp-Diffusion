@@ -316,8 +316,8 @@ def main(args):
         img_path = os.path.join(image_log_dir, f"image_{batch_idx:02}.jpg")
         im.save(img_path, optimize=True, quality=95)
         image_count += pixel_values.shape[0]
-        # if image_count >= args.num_validation_images:
-        # break
+        if image_count >= args.num_validation_images:
+            break
 
 
 if __name__ == "__main__":
