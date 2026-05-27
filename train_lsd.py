@@ -57,13 +57,12 @@ SLOT_ATTN_ENCODER_CLASSES = (SlotAttentionEncoder, DinoSlotAttentionEncoder)
 
 
 def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
-    """Compose an epsilon prediction from slot tokens.
+    """Compose an epsilon prediction by summing per-slot epsilons.
 
-    With R > 0: sum-of-deltas with the learned register slots as the
-    unconditional context, i.e. ``(1 - K) * eps_uncond + sum_k eps_slot_k``
-    where ``eps_slot_k`` conditions on ``[slot_k, registers]`` and
-    ``eps_uncond`` conditions on ``registers`` only. With R == 0 this falls
-    back to a plain sum of per-slot epsilons (see TECHDEBT).
+    Each per-slot forward conditions on ``[slot_k, registers]``; the composed
+    prediction is ``sum_k eps_slot_k``. Registers (if any) ride along in every
+    slot's conditioning sequence but there is no separate registers-only
+    forward.
     """
     B = noisy_model_input.shape[0]
     slots = slot_tokens[:, :K]
@@ -80,10 +79,6 @@ def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
 
     eps_slots = unet(noisy_expanded, timesteps_expanded, cond).sample
     eps_slots = eps_slots.view(B, K, *eps_slots.shape[1:])  # [B, K, C, H, W]
-
-    if R > 0:
-        eps_uncond = unet(noisy_model_input, timesteps, registers).sample
-        return (1 - K) * eps_uncond + eps_slots.sum(dim=1)
     return eps_slots.sum(dim=1)
 
 
@@ -186,6 +181,10 @@ def log_validation(
                 else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
                 for s in range(K)
             ]
+            # Per-slot decode: scale by K so the noise prediction has the
+            # same magnitude as the full sum_k eps_slot_k. Without this, a
+            # single slot contributes ~noise/K and the DDIM step barely
+            # denoises -- the per-slot image stays near the init noise.
             per_slot_images = [
                 pipeline(
                     prompt_embeds=embeds.to(
@@ -196,7 +195,7 @@ def log_validation(
                     width=args.resolution,
                     num_inference_steps=25,
                     generator=generator,
-                    guidance_scale=1.0,
+                    guidance_scale=float(K),
                     output_type="pt",
                 ).images
                 for embeds in per_slot_embeds

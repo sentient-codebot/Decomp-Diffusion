@@ -258,6 +258,9 @@ def main(args):
                 else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
                 for s in range(K)
             ]
+            # Per-slot decode: scale by K so the noise prediction has the
+            # same magnitude as the full sum_k eps_slot_k. Otherwise a single
+            # slot contributes ~noise/K and the DDIM step barely denoises.
             per_slot_images = [
                 pipeline(
                     prompt_embeds=embeds.to(
@@ -268,7 +271,7 @@ def main(args):
                     width=args.resolution,
                     num_inference_steps=25,
                     generator=generator,
-                    guidance_scale=1.0,
+                    guidance_scale=float(K),
                     output_type="pt",
                 ).images
                 for embeds in per_slot_embeds

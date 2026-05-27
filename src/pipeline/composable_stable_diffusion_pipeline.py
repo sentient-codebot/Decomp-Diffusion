@@ -1055,9 +1055,10 @@ class ComposableStableDiffusionPipeline(
             clip_skip=self.clip_skip,
         )
 
-        # Compositional CFG: registers (last `num_registers` tokens of
-        # prompt_embeds) act as the principled unconditional context. The
-        # legacy negative-prompt CFG branch is no longer used.
+        # Compositional denoising: split prompt_embeds into K slots followed
+        # by `num_registers` register tokens. Each per-slot UNet forward
+        # conditions on [slot_k, registers]; the composed noise prediction is
+        # the sum of per-slot epsilons (scaled by cfg_scale).
         K = prompt_embeds.shape[1] - num_registers
         if K < 1:
             raise ValueError(
@@ -1114,8 +1115,8 @@ class ComposableStableDiffusionPipeline(
             ).to(device=device, dtype=latents.dtype)
 
         # 7. Denoising loop
-        # Compositional CFG temperature: cfg_scale=1 reproduces the training
-        # objective at inference; >1 amplifies each slot's contribution.
+        # cfg_scale=1 reproduces the training objective at inference;
+        # >1 amplifies the summed slot contribution.
         cfg_scale = guidance_scale
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -1126,7 +1127,8 @@ class ComposableStableDiffusionPipeline(
 
                 latent_model_input = self.scheduler.scale_model_input(latents, t)
 
-                # Per-slot conditional epsilons: [slot_k, registers].
+                # Per-slot conditional epsilons: [slot_k, registers]. The
+                # composed prediction is just the sum (matches training).
                 eps_slots_sum = None
                 for k in range(K):
                     cond_k = slots[:, k : k + 1, :]
@@ -1143,20 +1145,7 @@ class ComposableStableDiffusionPipeline(
                     )[0]
                     eps_slots_sum = eps_k if eps_slots_sum is None else eps_slots_sum + eps_k
 
-                if registers is not None:
-                    eps_uncond = self.unet(
-                        latent_model_input,
-                        t,
-                        encoder_hidden_states=registers,
-                        timestep_cond=timestep_cond,
-                        cross_attention_kwargs=self.cross_attention_kwargs,
-                        added_cond_kwargs=added_cond_kwargs,
-                        return_dict=False,
-                    )[0]
-                    noise_pred = (1 - cfg_scale * K) * eps_uncond + cfg_scale * eps_slots_sum
-                else:
-                    # R == 0 fallback: sum of per-slot epsilons (matches training).
-                    noise_pred = cfg_scale * eps_slots_sum
+                noise_pred = cfg_scale * eps_slots_sum
 
                 if self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf

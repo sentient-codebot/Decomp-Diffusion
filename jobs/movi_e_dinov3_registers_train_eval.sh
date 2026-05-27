@@ -3,25 +3,25 @@
 # with DINOv3 ViT-S/16 at 256 resolution PLUS 4 learned register slots.
 #
 # Same backbone/resolution/budget as jobs/movi_e_dinov3_slot_train_eval.sh, but
-# the encoder config sets num_registers=4, num_components=24 and training now
-# uses the compositional sum-of-deltas objective implemented in 90108cb:
-#   eps = (1 - K) * eps_uncond + sum_k eps_slot_k
-# with eps_uncond conditioned on the 4 register tokens only. This swaps the
-# previous mean-aggregation loss (which was redundancy-collapse prone) for an
-# objective that explicitly rewards per-slot specialisation.
+# the encoder config sets num_registers=4, num_components=24. Training uses
+# the simple-sum compositional objective:
+#   eps = sum_k eps_slot_k
+# where each per-slot forward conditions on [slot_k, registers]. The earlier
+# sum-of-deltas variant ((1 - K) * eps_uncond + sum_k eps_slot_k with a
+# separate registers-only uncond forward) was dropped because per-slot decode
+# under it was underdetermined; registers still ride along in each slot's
+# conditioning but no longer have a dedicated uncond forward.
 #
 # K bumped from 11 -> 24 to match Nguyen et al. 2026 -- MOVi-E scenes can
 # carry ~20 instances, so 11 may have been undercounting.
 #
-# Earlier MOVi-E runs (DINO v1 23117268 and DINOv3 23118028 without registers)
-# were cancelled to free SBU for this run -- their intermediate checkpoints
-# remain in place but the trajectories under the new loss are not comparable,
-# so we start fresh under a separate output dir.
+# Earlier MOVi-E runs (DINO v1 23117268, DINOv3 23118028 without registers,
+# and the sum-of-deltas register run 23124195) were cancelled -- their
+# trajectories are not comparable under the new loss, so we start fresh.
 #
-# Moved to 2x H100: K=24 nearly doubles the per-step UNet work (K+1 = 25
-# forwards/step vs 12 before) and the cross-attn sequence is (1+R)=5 long
-# instead of 1, so VRAM headroom matters more here than on the prior A100
-# config; H100's 80 GB lets us keep PER_GPU_BATCH=8.
+# 2x H100 with K=24: per-step UNet work is K = 24 forwards (vs the earlier
+# K+1 = 25 under sum-of-deltas) and the cross-attn sequence is (1+R)=5 long.
+# H100's 80 GB lets us keep PER_GPU_BATCH=8.
 #
 # Depends on data laid down by jobs/movi_e_preprocess.sh
 # (~/prjs0993/datasets/movi-e/).

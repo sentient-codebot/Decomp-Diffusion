@@ -3,11 +3,11 @@
 Known shortcuts, divergences, and deferred fixes. Add an entry when you discover or
 introduce debt; remove it when resolved. For longer-term direction see `ROADMAP.md`.
 
-## `num_registers=0` denoising target changed from mean to sum
+## Denoising target changed from mean to sum
 
-After the register-slot refactor, the training composition for `num_registers=0` falls back to `eps_pred = sum_k eps_slot_k` (in both `train_lsd.py` and `composable_stable_diffusion_pipeline.py`) rather than the previous `mean_k eps_slot_k`. With the new compositional objective `(1 - K) * eps_uncond + sum_k eps_slot_k`, the sum form is the natural `R == 0` limit (drop the unconditional term); the mean form would silently rescale the target by `1/K` relative to the new objective, so the divergence is deliberate.
+The training composition is `eps_pred = sum_k eps_slot_k` (in both `train_lsd.py` and `composable_stable_diffusion_pipeline.py`) rather than the previous `mean_k eps_slot_k`. The sum form is the simplest compositional objective and matches the original Decomp-Diffusion paper; the mean form silently rescales the target by `1/K`. Registers (when present) are still concatenated to each slot's conditioning sequence, but there is no separate registers-only forward / `(1 - K) * eps_uncond` term -- that earlier sum-of-deltas variant was dropped because the per-slot decode it implied was underdetermined (see chat history 2026-05-26).
 
-**Implication:** legacy configs that still set `num_registers=0` (or omit the key) will train with a different loss scale than prior runs. Existing checkpoints trained under the old mean aggregation are NOT inference-compatible with the new pipeline; re-train rather than mixing.
+**Implication:** existing checkpoints trained under the old mean aggregation or the sum-of-deltas variant are NOT inference-compatible with the current pipeline; re-train rather than mixing.
 
 ## UNet positional embedding silently dropped
 
