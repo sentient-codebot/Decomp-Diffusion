@@ -24,19 +24,16 @@ constraint-dependencies = ["setuptools<81"]
 
 then re-sync (`uv sync --extra wandb --extra tensorboard --extra xformers`). Alternatively, drop tensorboard entirely and standardise on wandb (`--report_to wandb`), which is the preferred logging backend going forward.
 
-## H100 throughput knobs left on the table
+## H100 throughput knobs -- benchmarks pending
 
-Current MOVi-E training (default 2x H100, e.g. `jobs/movi_e_dinov3_registers_train_eval.sh`) is using `mixed_precision: fp16` + xformers MEA, with `allow_tf32`, `torch.compile` and bf16 all unused. On Hopper this leaves measurable throughput unclaimed:
+The low-risk pass (bf16 + `allow_tf32: true` + `dataloader_num_workers=8`) has landed in `configs/{celebahq,movi-e}/train_config.yaml` (commits f3794ae, 8fecab7, 1d55402). Remaining items:
 
-- **`fp16` instead of `bf16`** -- H100 has identical TFLOPs for both, but bf16's wider exponent range removes the loss-scaler / NaN risk that fp16 + diffusion training is known for. `src/parser.py:231` already exposes `bf16`; flipping `mixed_precision` in `configs/{celebahq,movi-e}/train_config.yaml` is the only change needed.
-- **`allow_tf32` not set** -- wired through (`train_lsd.py:548-551`) but no job passes `--allow_tf32`, so the non-AMP matmuls (encoder, slot-attention master weights) miss out.
-- **No `torch.compile`** -- UNet + slot-attention are well-suited to it on H100 (cudagraphs + Triton); typical 1.3-1.8x on diffusion training.
-- **xformers MEA over PyTorch SDPA** -- on H100, SDPA selects FlashAttention-3, which is usually faster than xformers' MEA. Worth A/B-ing and dropping `enable_xformers_memory_efficient_attention` if SDPA wins.
-- **`dataloader_num_workers=4`** -- low for the 256-res DINOv3 path; bump to 8-12 + `persistent_workers=True` to keep both H100s fed.
+- **xformers MEA -> PyTorch SDPA** -- `enable_xformers_memory_efficient_attention` is now `false` in both configs, so diffusers falls back to `AttnProcessor2_0` (calls `torch.nn.functional.scaled_dot_product_attention`); on H100 + PyTorch 2.5+ that auto-dispatches to FlashAttention-3 for bf16/fp16. A/B benchmark queued: `jobs/movi_e_attn_sdpa_smoketest.sh` runs xformers vs SDPA back-to-back on a single H100. If SDPA loses, override per-job with `--enable_xformers_memory_efficient_attention`.
+- **`torch.compile` / dynamo** -- not yet adopted in any long run. Benchmark queued: `jobs/movi_e_attn_sdpa_dynamo_smoketest.sh` runs SDPA vs SDPA+`--dynamo_backend=inductor`. Expect ~1.3-1.8x on diffusion training, but compile is paid up-front and can surface dynamic-shape recompilations in the slot-attention path -- inspect the slurm log for `TorchDynamo` warnings before trusting the number.
 
 VRAM headroom on the 128-res runs is also unused (per-GPU batch 16-32 on 80 GB H100), but raising that interacts with effective-batch / LR comparability across runs, so handle it separately from the throughput knobs above.
 
-**Fix:** land bf16 + `allow_tf32: true` + worker bump as a single low-risk pass, validated on a smoketest. Benchmark `torch.compile(unet)` and SDPA-vs-xformers separately before committing them to the long runs.
+**Fix:** run both smoketests; if either backend wins, fold the change into the long jobs (configs already default to SDPA; dynamo would be a per-job `--dynamo_backend=inductor` flag on `accelerate launch`). Write the result up under `docs/experiments/` and remove the resolved bullet here.
 
 ## Capacity / resolution gap vs Nguyen et al. 2026 baseline
 

@@ -31,7 +31,7 @@ checkpoints_total_limit: 2
 # --- runtime ---
 mixed_precision: bf16
 allow_tf32: true
-enable_xformers_memory_efficient_attention: true
+enable_xformers_memory_efficient_attention: false  # SDPA -> FlashAttention-3 on H100
 
 # --- logging ---
 tracker_project_name: latent_decomposed_diffusion
