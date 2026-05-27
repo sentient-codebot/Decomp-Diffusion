@@ -9,8 +9,9 @@ Managed by `uv`.
 
 - Sync: `uv sync --extra wandb --extra tensorboard --extra xformers`
 - Run: prefix commands with `uv run` (for example, `uv run accelerate launch ...`)
-- The lock is multi-platform; on Linux, torch resolves to the CUDA 12.4 wheel
-  via the `pytorch-cu124` index declared in `pyproject.toml`.
+- The lock is multi-platform; on Linux, torch resolves to the CUDA 12.6 wheel
+  via the `pytorch-cu126` index declared in `pyproject.toml`. cu126 wheels
+  need NVIDIA driver R555+, which the Snellius H100 partitions have.
 
 Optional extras:
 
@@ -78,6 +79,13 @@ Optional extras:
   root when needed.
 - Set `WANDB_DIR="$HOME/prjs0993/<project>/wandb"` and
   `HF_HOME="$HOME/prjs0993/<project>/cache/huggingface"` in job scripts.
+- Jobs that use `torch.compile` / `--dynamo_backend=inductor` should also
+  export `TORCHINDUCTOR_CACHE_DIR="$HOME/prjs0993/tmp/torchinductor"` (shared
+  across projects). It is set in `~/.bashrc`, but sbatch does not always
+  re-source bashrc; exporting in the script keeps the Inductor compile cache
+  warm across runs (one-time ~170s compile becomes ~0 on cache hit; keyed by
+  FX graph + shapes + dtypes + torch/triton version, so weight values and
+  unrelated projects do not invalidate it).
 - Slurm output paths must be literal, for example
   `#SBATCH --output=/home/nlin/prjs0993/<project>/slurm_logs/slurm_%j.log`.
 
@@ -128,6 +136,7 @@ Dependency caps in `pyproject.toml` are deliberately conservative:
 - `diffusers <0.32`
 - `transformers <5.0`
 - `numpy <2.0`
-- `torch >=2.5,<2.7` with CUDA 12.4
+- `torch >=2.7,<2.8` with CUDA 12.6 (bumped from 2.6+cu124 for triton 3.3 +
+  `torch.compile` / inductor support on Python 3.12)
 
 If these are bumped, rerun training to confirm metrics before trusting results.

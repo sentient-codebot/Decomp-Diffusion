@@ -8,7 +8,7 @@ Managed by [uv](https://github.com/astral-sh/uv).
 
 - Sync: `uv sync --extra wandb --extra tensorboard --extra xformers`
 - Run: prefix commands with `uv run` (e.g. `uv run accelerate launch ...`)
-- The lock is multi-platform; on Linux, torch resolves to the CUDA 12.4 wheel via the `pytorch-cu124` index declared in `pyproject.toml`.
+- The lock is multi-platform; on Linux, torch resolves to the CUDA 12.6 wheel via the `pytorch-cu126` index declared in `pyproject.toml`. cu126 wheels need NVIDIA driver R555+, which the Snellius H100 partitions have.
 
 Optional extras:
 - `wandb`, `tensorboard` — logging backends
@@ -44,6 +44,7 @@ Optional extras:
 
 - **Slurm jobs:** write sbatch job scripts under `jobs/`. (Distinct from `scripts/<experiment>/` launch wrappers, which hold only run/machine-specific paths.)
 - **Experiment results:** write up results as markdown reports under `docs/`. Name reports for long-term maintenance, not one-offs: `docs/experiments/YYYY-MM-DD-<dataset>-<topic>.md` (date prefix sorts chronologically; `<dataset>` and `<topic>` keep them scannable, e.g. `2026-05-20-celebahq-slot-count-sweep.md`).
+- **Inductor cache:** jobs that use `torch.compile` / `--dynamo_backend=inductor` should export `TORCHINDUCTOR_CACHE_DIR="$HOME/prjs0993/tmp/torchinductor"` inside the sbatch script. It is also set in `~/.bashrc`, but sbatch does not always re-source bashrc; exporting in the script keeps the cache warm across runs (one-time ~170s compile becomes ~0 on cache hit).
 
 ## Reproducibility notes
 
@@ -51,6 +52,6 @@ Dependency caps in `pyproject.toml` are deliberately conservative to keep experi
 - `diffusers <0.32` (original was 0.25.1; the pipeline file requires ≥0.27 because of `FusedAttnProcessor2_0`)
 - `transformers <5.0` — stays on the v4 API the code was written against
 - `numpy <2.0`
-- `torch >=2.5,<2.7` with CUDA 12.4 (upgraded from 2.0.1+cu118)
+- `torch >=2.7,<2.8` with CUDA 12.6 (upgraded from 2.0.1+cu118 → 2.6+cu124 → 2.7+cu126; the cu126 / triton 3.3 bump was needed for `torch.compile` / inductor on Python 3.12)
 
 If you bump any of these, re-run training to confirm metrics before trusting results.
