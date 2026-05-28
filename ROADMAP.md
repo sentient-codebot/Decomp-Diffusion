@@ -264,6 +264,68 @@ aggregation, which was redundancy-collapse prone.
   of object slots, a collapse diagnostic) to wandb logging at every
   validation step.
 
+## Adaptive epsilon composition weights
+
+**Goal:** replace uniform per-slot epsilon composition with learned
+spatially adaptive weights, so empty or irrelevant slots can contribute less
+where another slot better explains the image content. The current composition
+can be viewed as
+`eps_comp = sum_k eps_k * w_k` with `w_k = 1 / K`, constant across spatial
+locations and slots. This treats all slots as equally useful everywhere,
+which is a poor match for object-centric decomposition when some slots are
+empty, background-like, or redundant.
+
+**Target formulation:** compose
+`eps_comp[:, :, i, j] = sum_k eps_k[:, :, i, j] * w[:, k, i, j]`, where
+`w[:, k, i, j]` is spatial, non-negative, and normalized over slots:
+`w[:, k, i, j] in [0, 1]` and `sum_k w[:, k, i, j] = 1` for every spatial
+location `(i, j)`. This turns reconstruction into a per-location competition:
+each slot proposes an epsilon prediction, and the mask decides which slot(s)
+should explain that location.
+
+**Design choices to explore:**
+- Reuse the encoder-side Slot Attention scores as masks. They already encode
+  token-to-slot ownership and, for CNN / ViT feature maps, have a spatial
+  layout that can be resized to the UNet latent resolution.
+- Add lightweight adaptation layers on top of the Slot Attention scores
+  before composition, for example a small per-slot refinement head,
+  temperature / sharpening control, or a learned projection from encoder
+  feature-map masks to denoiser latent masks.
+- Predict masks from slot embeddings plus image / denoiser features when
+  attention scores are too coarse or too tied to the encoder feature grid.
+  This is higher risk because the mask path may learn shortcut behavior, so
+  it should follow the attention-score baseline.
+- Decide whether masks weight raw `eps_slot_k`, slot residuals relative to
+  an unconditional/register prediction, or both objective variants. Keep the
+  implementation explicit so mean-aggregation, sum-of-deltas, and register
+  ablations remain comparable.
+
+**Validation plan:**
+- Start with MOVi-E, where GT masks make the mask behavior measurable.
+  Report reconstruction loss, FG-ARI / mBO / mIoU, property-probe scores,
+  and qualitative mask overlays alongside the usual per-slot generations.
+- Add diagnostics for mask entropy, empty-slot mass, and agreement between
+  learned composition masks and Slot Attention masks / GT instance masks.
+- Compare at least three variants under the same encoder and training budget:
+  uniform weights, direct Slot Attention masks, and adapted / refined masks.
+  Promote the simplest variant that improves decomposition without reducing
+  reconstruction quality.
+
+**Resolution caveat:** the composition masks operate in the same relatively
+low spatial regime as the slots and denoiser latents: typically 16x16 for
+128px inputs or 32x32 for 256px inputs in the SD VAE latent space. This is
+enough for denoising competition, but it limits segmentation fidelity. If
+high-resolution masks become important later, possible extensions include a
+separate upsampling / refinement head or an image-space mask decoder. That
+would be a larger effort and is not a priority for the current research line,
+which is decomposition for compositional diffusion rather than high-resolution
+segmentation.
+
+**Sequencing:** this stage follows the register-slot and K/V-only decoder
+experiments. Registers address what information enters each slot; adaptive
+composition addresses how much each slot is allowed to contribute at each
+denoiser spatial location.
+
 ## Object-centric representation metrics
 
 **Goal:** broaden evaluation beyond per-component decoding grids and the
