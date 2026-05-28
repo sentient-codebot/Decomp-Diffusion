@@ -27,7 +27,8 @@ dataloader_num_workers: 8
 val_batch_size: 32
 num_validation_images: 32
 validation_steps: 5000
-movi_eval_root: data/movi-e             # enables val/fg_ari, val/mbo, val/miou during validation
+movi_eval_root: data/movi-e-wds         # shard root for val/fg_ari, val/mbo, val/miou during validation
+movi_eval_format: wds
 
 # --- checkpointing ---
 checkpointing_steps: 20000

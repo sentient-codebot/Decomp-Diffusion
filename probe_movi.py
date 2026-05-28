@@ -26,7 +26,7 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch.utils.data import DataLoader
 
-from src.data.dataset import MoviPairDataset
+from src.data.dataset import build_movi_pair_dataset
 from src.models.encoder import (
     DinoSlotAttentionEncoder,
     SlotAttentionEncoder,
@@ -43,7 +43,16 @@ def parse_args():
     p.add_argument(
         "--dataset_root",
         required=True,
-        help="Path containing movi-e-{split}-with-label/{images,labels}/<vid>/...",
+        help=(
+            "MOVi root. For files: contains movi-e-{split}-with-label/. "
+            "For wds: contains split shard directories."
+        ),
+    )
+    p.add_argument(
+        "--movi_eval_format",
+        default="files",
+        choices=["files", "wds"],
+        help="Storage format for --dataset_root.",
     )
     p.add_argument(
         "--split", default="validation", choices=["train", "validation", "test"]
@@ -173,7 +182,8 @@ def build_cache(args, device, dtype, cache_path):
     encoder.requires_grad_(False)
     print(f"loaded {type(encoder).__name__} with {encoder.num_components} slots")
 
-    dataset = MoviPairDataset(
+    dataset = build_movi_pair_dataset(
+        dataset_format=args.movi_eval_format,
         root=args.dataset_root,
         split=args.split,
         img_size=args.resolution,

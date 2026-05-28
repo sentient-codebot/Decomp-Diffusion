@@ -9,7 +9,8 @@ shift 2
 
 uv run python probe_movi.py \
     --ckpt_path "$CKPT" \
-    --dataset_root data/movi-e \
+    --dataset_root data/movi-e-wds \
+    --movi_eval_format wds \
     --split validation \
     --resolution 128 \
     --batch_size 16 \

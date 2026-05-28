@@ -57,7 +57,8 @@ fi
 START=$(date +%s)
 uv run python eval_movi.py \
     --ckpt_path "$CKPT" \
-    --dataset_root data/movi-e \
+    --dataset_root data/movi-e-wds \
+    --movi_eval_format wds \
     --split validation \
     --resolution "$RESOLUTION" \
     --batch_size 16 \

@@ -332,6 +332,16 @@ def parse_args(input_args=None):
         help="Glob pattern for the dataset.",
     )
     parser.add_argument(
+        "--dataset_format",
+        type=str,
+        default="files",
+        choices=["files", "wds"],
+        help=(
+            "Dataset storage format for --dataset_root. 'files' reads loose "
+            "images; 'wds' reads MOVi WebDataset-style tar shards."
+        ),
+    )
+    parser.add_argument(
         "--encoder_lr_scale",
         type=float,
         default=3.0,
@@ -354,6 +364,13 @@ def parse_args(input_args=None):
             "val/miou are logged each validation step. Off by default so "
             "non-MOVi-E runs are unaffected."
         ),
+    )
+    parser.add_argument(
+        "--movi_eval_format",
+        type=str,
+        default="files",
+        choices=["files", "wds"],
+        help="Storage format for --movi_eval_root.",
     )
     parser.add_argument(
         "--movi_eval_split",

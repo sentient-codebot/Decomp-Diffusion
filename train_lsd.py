@@ -30,7 +30,7 @@ from PIL import Image
 from torchvision.utils import make_grid
 from tqdm.auto import tqdm
 
-from src.data.dataset import GlobDataset, MoviPairDataset
+from src.data.dataset import build_image_dataset, build_movi_pair_dataset
 from src.metrics.segmentation import (
     per_image_fg_ari,
     per_image_mbo,
@@ -204,8 +204,6 @@ def log_validation(
 
         with torch.autocast("cuda"):
             model_input = vae.encode(pixel_values).latent_dist.sample()
-            pixel_values_recon = vae.decode(model_input).sample
-
             slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
             K = latent_encoder_type.num_components
             R = getattr(latent_encoder_type, "num_registers", 0)
@@ -467,11 +465,11 @@ def main(args):
             os.makedirs(args.output_dir, exist_ok=True)
 
         if args.push_to_hub:
-            repo_id = create_repo(
+            create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name,
                 exist_ok=True,
                 token=args.hub_token,
-            ).repo_id
+            )
 
     # Load scheduler and models
     if args.unet_config == "pretrain_sd":
@@ -617,10 +615,10 @@ def main(args):
     if args.use_8bit_adam:
         try:
             import bitsandbytes as bnb
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
-            )
+            ) from err
 
         optimizer_class = bnb.optim.AdamW8bit
     else:
@@ -672,7 +670,8 @@ def main(args):
         lr_lambda=[lambda _: 1, lambda _: 1] if unet_optimized else [lambda _: 1],
     )
 
-    train_dataset = GlobDataset(
+    train_dataset = build_image_dataset(
+        dataset_format=args.dataset_format,
         root=args.dataset_root,
         img_size=args.resolution,
         img_glob=args.dataset_glob,
@@ -688,7 +687,8 @@ def main(args):
     )
 
     # validation set is only for visualization
-    val_dataset = GlobDataset(
+    val_dataset = build_image_dataset(
+        dataset_format=args.dataset_format,
         root=args.dataset_root,
         img_size=args.resolution,
         img_glob=args.dataset_glob,
@@ -703,7 +703,8 @@ def main(args):
     # eval inside log_validation also requires a slot-attention encoder.
     movi_eval_dataset = None
     if args.movi_eval_root is not None:
-        movi_eval_dataset = MoviPairDataset(
+        movi_eval_dataset = build_movi_pair_dataset(
+            dataset_format=args.movi_eval_format,
             root=args.movi_eval_root,
             split=args.movi_eval_split,
             img_size=args.resolution,
@@ -825,11 +826,11 @@ def main(args):
         leave=True,
     )
 
-    for epoch in range(first_epoch, args.num_train_epochs):
+    for _epoch in range(first_epoch, args.num_train_epochs):
         if unet_optimized:
             unet.train()
         latent_encoder.train()
-        for step, batch in enumerate(train_dataloader):
+        for _step, batch in enumerate(train_dataloader):
             pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
 
             # Convert images to latent space
@@ -969,10 +970,8 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-                    images = []
-
                     if global_step % args.validation_steps == 0:
-                        images = log_validation(
+                        log_validation(
                             val_dataset=val_dataset,
                             latent_encoder=latent_encoder,
                             unet=unet,

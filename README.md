@@ -36,6 +36,18 @@ The standard CelebA-HQ release is 30,000 images at 1024×1024; download it and
 point `--dataset_root` / `--dataset_glob` at the images (downscaling to 128 is
 optional). To train on a different dataset, override those two flags.
 
+For MOVi-E, use sharded data by default to avoid exhausting `prjs0993` inodes.
+Existing loose dumps can be converted with:
+
+```bash
+sbatch jobs/movi_e_shard_wds.sh
+```
+
+Future preprocessing should use `jobs/movi_e_preprocess.sh`; it expands the raw
+PNG/JSON layout on `/scratch-shared/nlin/...` and writes persistent shards to
+`data/movi-e-wds/`. MOVi training/eval scripts now expect these shards and pass
+`--dataset_format wds` / `--movi_eval_format wds`.
+
 # 3. train the model
 
 Training hyperparameters live in a YAML config (`configs/celebahq/train_config.yaml`);
@@ -78,5 +90,5 @@ bash scripts/movi-e/probe.sh <ckpt_path> <output_dir>
 
 Training-time validation can also stream the segmentation metrics to wandb if
 you pass `--movi_eval_root <root>` to `train_lsd.py` (off by default, so
-CelebA-HQ runs are unaffected). The MOVi pair dataset is capped to
+CelebA-HQ runs are unaffected). Use `--movi_eval_format wds` for sharded MOVi-E. The MOVi pair dataset is capped to
 `--movi_eval_max_images` (default 256) for a quick read each `validation_steps`.

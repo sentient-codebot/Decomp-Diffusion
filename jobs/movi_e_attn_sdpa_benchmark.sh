@@ -38,9 +38,9 @@ N_STEPS=150
 rm -rf image_test_output "$RUN_ROOT"
 
 # --- 0. Sanity check ---------------------------------------------------------
-TRAIN_IMG_ROOT=data/movi-e/movi-e-train-with-label/images
-if [ ! -d "$TRAIN_IMG_ROOT" ]; then
-    echo "[attn-sdpa-smoke] FATAL: $TRAIN_IMG_ROOT missing -- run jobs/movi_e_preprocess.sh first."
+TRAIN_SHARD_ROOT=data/movi-e-wds/train
+if [ ! -f "$TRAIN_SHARD_ROOT/samples.jsonl" ]; then
+    echo "[attn-sdpa-smoke] FATAL: $TRAIN_SHARD_ROOT/samples.jsonl missing -- run jobs/movi_e_shard_wds.sh first."
     exit 1
 fi
 
@@ -58,8 +58,9 @@ run_train() {
         --latent_encoder_config configs/movi-e/dinov3_slot_encoder/config.json \
         --unet_config configs/movi-e/unet/config.json \
         --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
-        --dataset_root "$TRAIN_IMG_ROOT" \
-        --dataset_glob '**/*.png' \
+        --dataset_root "$TRAIN_SHARD_ROOT" \
+        --dataset_glob '*.tar' \
+        --dataset_format wds \
         --report_to wandb \
         --resolution "$RESOLUTION" \
         --train_batch_size "$PER_GPU_BATCH" \

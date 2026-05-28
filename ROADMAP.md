@@ -18,6 +18,45 @@ This validation is the prerequisite for the slot-extraction work below — it es
 - 2026-05-20 — reduced 50k-step end-to-end validation (pipeline check, not yet the full 500k run). Slurm jobs 22966115 (train, 2x H100) + 22974706 (eval); scripts `jobs/celebahq_train_eval_validation.sh` + `jobs/celebahq_eval_validation.sh`; checkpoint at `results/celebahq_validation/latent_decomposed_diffusion/checkpoint-50000-last`. Result: train + eval pipelines run cleanly — report `docs/experiments/2026-05-20-celebahq-train-eval-validation.md`. Still open: the full 500k-step run and the baseline-soundness decision.
 - 2026-05-20 — full 500k-step run launched. Slurm job 22976095 (train+eval, 2x H100); script `jobs/celebahq_train_eval_full.sh`; output `results/celebahq/latent_decomposed_diffusion/`; report (on completion) `docs/experiments/2026-05-20-celebahq-full-500k-run.md`. ~25h compute. This is the run the soundness decision will be made from.
 
+## Storage and inode pressure
+
+**Goal:** keep `prjs0993` comfortably below inode quota so training jobs do
+not fail during cache, checkpoint, or log writes. The COCO 200k-step launch on
+2026-05-27 failed before step 1 when Torch Inductor/Triton attempted to write
+compiled kernels into `~/prjs0993/tmp/torchinductor` while the project space was
+over inode quota.
+
+**Cleanup done:**
+- 2026-05-27 - removed stale artifact-only environments and old HeatoDiff
+  artifacts from `/gpfs/work2/0/prjs0993/artifacts`: `OpenSynth/.venv`,
+  `FM-Energy/.venv`, and `HeatoDiff/`. This reduced artifact inode use from
+  ~92.6k to 3 inodes. `tmp/torchinductor` was intentionally kept so compiled
+  kernels remain warm.
+
+**Implementation path:**
+- MOVi-E now has a WebDataset-style tar shard path: `data/movi-e-wds/` with
+  per-split `samples.jsonl` byte-offset indexes and manifests. Training,
+  reconstruction eval, `eval_movi.py`, and `probe_movi.py` can read shards via
+  `--dataset_format wds` / `--movi_eval_format wds`; MOVi job scripts use this
+  path by default.
+- `jobs/movi_e_shard_wds.sh` converts an existing loose MOVi-E tree to shards
+  on `prjs0993`. `jobs/movi_e_preprocess.sh` now expands TFDS output on
+  `/scratch-shared/nlin/...` and publishes only shards to persistent storage.
+- Storage docs and a read-only inode report live in `docs/storage.md` and
+  `scripts/storage/inode_report.sh`. The retention convention is to keep
+  reports, final checkpoints, shard manifests, synced W&B URLs, and the warm
+  Torch Inductor cache; prune redundant local W&B/debug runs after sync unless
+  needed for offline debugging.
+
+**Remaining work:**
+- Run `jobs/movi_e_shard_wds.sh`, validate shard smoke training plus MOVi
+  metrics, then remove the persistent loose `~/prjs0993/datasets/movi-e/` tree.
+- Decide whether COCO should remain as loose JPGs. COCO currently costs about
+  123k inodes, almost entirely `images/`; this is acceptable short term but
+  should be sharded if repeated natural-image experiments become common.
+- Keep `celebahq_data128x128` under review (~30k inodes). It is smaller than
+  MOVi-E/COCO, so defer unless quota pressure returns.
+
 ## Slot extraction: slot attention
 
 **Goal:** move slot extraction to a proper **slot attention module**. This is

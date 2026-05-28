@@ -18,7 +18,7 @@ from diffusers.utils import is_wandb_available
 from PIL import Image
 from torchvision.utils import make_grid
 
-from src.data.dataset import GlobDataset
+from src.data.dataset import build_image_dataset
 from src.models.encoder import load_latent_encoder
 from src.pipeline.composable_stable_diffusion_pipeline import (
     ComposableStableDiffusionPipeline,
@@ -71,6 +71,13 @@ parser.add_argument(
     "--dataset_glob",
     type=str,
     default=" **/*.jpg",
+)
+
+parser.add_argument(
+    "--dataset_format",
+    type=str,
+    default="files",
+    choices=["files", "wds"],
 )
 
 parser.add_argument(
@@ -173,7 +180,8 @@ def main(args):
     print(f"loaded a trained {type(latent_encoder).__name__}")
 
     # prepare validation data
-    val_dataset = GlobDataset(
+    val_dataset = build_image_dataset(
+        dataset_format=args.dataset_format,
         root=args.dataset_root,
         img_size=args.resolution,
         img_glob=args.dataset_glob,
@@ -183,7 +191,7 @@ def main(args):
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=args.num_workers,
     )
 
     print("***** Running testing *****")

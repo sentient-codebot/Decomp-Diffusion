@@ -10,7 +10,7 @@
 # small (~22M params, frozen), and the forward pass skips backbone backward,
 # so step time should be comparable to or faster than the CNN baseline.
 #
-# Depends on data laid down by jobs/movi_e_preprocess.sh (~/prjs0993/datasets/movi-e/).
+# Depends on shards laid down by jobs/movi_e_shard_wds.sh (~/prjs0993/datasets/movi-e-wds/).
 #
 # Restart-safe: --resume_from_checkpoint latest picks up the most recent
 # checkpoint if the job is resubmitted after a timeout or node failure.
@@ -44,21 +44,18 @@ mkdir -p "$(dirname "$REPORT")"
 rm -rf image_test_output
 
 # --- 0. Sanity check: dataset must already be preprocessed -------------------
-TRAIN_IMG_ROOT=data/movi-e/movi-e-train-with-label/images
-VAL_IMG_ROOT=data/movi-e/movi-e-validation-with-label/images
-if [ ! -d "$TRAIN_IMG_ROOT" ]; then
-    echo "[movi-e-dino-run] FATAL: $TRAIN_IMG_ROOT is missing -- run jobs/movi_e_preprocess.sh first."
+TRAIN_SHARD_ROOT=data/movi-e-wds/train
+VAL_SHARD_ROOT=data/movi-e-wds/validation
+if [ ! -f "$TRAIN_SHARD_ROOT/samples.jsonl" ]; then
+    echo "[movi-e-dino-run] FATAL: $TRAIN_SHARD_ROOT/samples.jsonl missing -- run jobs/movi_e_shard_wds.sh first."
     exit 1
 fi
-TRAIN_N=$(find "$TRAIN_IMG_ROOT" -name '*_image.png' | wc -l)
-VAL_N=$(find "$VAL_IMG_ROOT" -name '*_image.png' 2>/dev/null | wc -l)
+TRAIN_N=$(wc -l < "$TRAIN_SHARD_ROOT/samples.jsonl")
+VAL_N=$(wc -l < "$VAL_SHARD_ROOT/samples.jsonl" 2>/dev/null || echo 0)
 echo "[movi-e-dino-run] train frames=$TRAIN_N  val frames=$VAL_N"
 
 # Prime the GPFS metadata cache (same reason as the CNN slot-attn run -- 234k
 # files, cold metadata races across 4 ranks).
-echo "[movi-e-dino-run] priming GPFS metadata..."
-find "$TRAIN_IMG_ROOT" "$VAL_IMG_ROOT" -type f >/dev/null
-echo "[movi-e-dino-run] done priming."
 
 # Raise NCCL collective timeout.
 export TORCH_NCCL_BLOCKING_WAIT=1
@@ -77,8 +74,9 @@ uv run accelerate launch --multi_gpu --num_processes=4 --mixed_precision bf16 \
     --latent_encoder_config configs/movi-e/dino_slot_encoder/config.json \
     --unet_config configs/movi-e/unet/config.json \
     --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
-    --dataset_root "$TRAIN_IMG_ROOT" \
-    --dataset_glob '**/*.png' \
+    --dataset_root "$TRAIN_SHARD_ROOT" \
+    --dataset_glob '*.tar' \
+    --dataset_format wds \
     --report_to wandb \
     --train_batch_size 16 \
     --resume_from_checkpoint latest \
@@ -102,8 +100,9 @@ if [ -n "$CKPT" ]; then
         --batch_size 16 --num_validation_images 16 \
         --output_dir "$RUN_DIR/gen_images" \
         --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
-        --dataset_root "$VAL_IMG_ROOT" \
-        --dataset_glob '**/00000000_image.png' --resolution 128 \
+        --dataset_root "$VAL_SHARD_ROOT" \
+        --dataset_glob '**/00000000_image.png' \
+        --dataset_format wds --resolution 128 \
         --ckpt_path "$CKPT"
     EVAL_RECON_RC=$?
 else
@@ -122,7 +121,8 @@ mkdir -p "$METRICS_DIR"
 if [ -n "$CKPT" ]; then
     uv run python eval_movi.py \
         --ckpt_path "$CKPT" \
-        --dataset_root data/movi-e \
+        --dataset_root data/movi-e-wds \
+        --movi_eval_format wds \
         --split validation \
         --resolution 128 \
         --batch_size 32 \
