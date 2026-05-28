@@ -151,10 +151,11 @@ parser.add_argument(
     "--epsilon_composition",
     type=str,
     default="mean",
-    choices=["mean", "slot_attn"],
+    choices=["mean", "slot_attn", "slot_attn_pool"],
     help=(
         "How to compose per-slot epsilon predictions for reconstruction. "
-        "Use 'slot_attn' for checkpoints trained with adaptive slot masks."
+        "Use 'slot_attn' for spatial adaptive masks, or 'slot_attn_pool' "
+        "for pooled per-slot scalar weights."
     ),
 )
 
@@ -199,12 +200,12 @@ def main(args):
     # Detects the encoder type (LatentEncoder vs SlotAttentionEncoder) from the
     # checkpoint subfolder, so eval works for either training run.
     latent_encoder = load_latent_encoder(args.ckpt_path)
-    if args.epsilon_composition == "slot_attn" and not isinstance(
+    if args.epsilon_composition in ("slot_attn", "slot_attn_pool") and not isinstance(
         latent_encoder, SlotAttentionEncoder | DinoSlotAttentionEncoder
     ):
         raise ValueError(
-            "--epsilon_composition slot_attn requires a slot-attention encoder "
-            "checkpoint so return_attn=True is available."
+            "--epsilon_composition slot_attn/slot_attn_pool requires a "
+            "slot-attention encoder checkpoint so return_attn=True is available."
         )
     latent_encoder = latent_encoder.to(device=accelerator.device, dtype=weight_dtype)
     print(f"loaded a trained {type(latent_encoder).__name__}")
@@ -284,9 +285,14 @@ def main(args):
 
         with torch.autocast("cuda"):
             composition_weights = None
-            if args.epsilon_composition == "slot_attn":
-                slot_tokens, composition_weights = latent_encoder(
+            if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
+                slot_tokens, slot_attn = latent_encoder(
                     pixel_values, return_attn=True
+                )
+                composition_weights = (
+                    slot_attn.float().mean(dim=(-2, -1))
+                    if args.epsilon_composition == "slot_attn_pool"
+                    else slot_attn
                 )
             else:
                 slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
@@ -302,9 +308,8 @@ def main(args):
                 else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
                 for s in range(K)
             ]
-            # Per-slot decode: under the mean-of-eps training objective each
-            # per-slot eps is already on a unit-noise scale, so guidance_scale=1
-            # matches what the model saw during training.
+            # Per-slot decode isolates one slot at a time. Adaptive composition
+            # weights are applied only to the full reconstruction below.
             per_slot_images = [
                 pipeline(
                     prompt_embeds=embeds.to(

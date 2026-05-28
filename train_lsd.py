@@ -97,20 +97,26 @@ def prepare_slot_composition_weights(
     dtype,
     device,
 ):
-    """Resize, detach, and normalize per-slot composition weights."""
-    if composition_weights.ndim != 4:
-        raise ValueError(
-            "composition_weights must have shape [B, K, H, W], got "
-            f"{tuple(composition_weights.shape)}"
-        )
+    """Normalize detached per-slot weights.
 
-    weights = composition_weights.float()
-    if tuple(weights.shape[-2:]) != tuple(target_size):
-        weights = F.interpolate(
-            weights,
-            size=target_size,
-            mode="bilinear",
-            align_corners=False,
+    Accepts either spatial weights [B, K, H, W] or pooled scalar weights
+    [B, K]. Scalar weights are broadcast over the epsilon spatial grid.
+    """
+    if composition_weights.ndim == 2:
+        weights = composition_weights.float()[:, :, None, None]
+    elif composition_weights.ndim == 4:
+        weights = composition_weights.float()
+        if tuple(weights.shape[-2:]) != tuple(target_size):
+            weights = F.interpolate(
+                weights,
+                size=target_size,
+                mode="bilinear",
+                align_corners=False,
+            )
+    else:
+        raise ValueError(
+            "composition_weights must have shape [B, K] or [B, K, H, W], got "
+            f"{tuple(composition_weights.shape)}"
         )
 
     weights = weights.clamp_min(0.0)
@@ -118,6 +124,11 @@ def prepare_slot_composition_weights(
     uniform = torch.full_like(weights, 1.0 / weights.shape[1])
     weights = torch.where(denom > 1e-6, weights / denom.clamp_min(1e-6), uniform)
     return weights.detach().to(device=device, dtype=dtype)
+
+
+def pooled_slot_attention_weights(attn):
+    """Pool [B, K, H, W] slot-attention masks to scalar [B, K] weights."""
+    return attn.float().mean(dim=(-2, -1))
 
 
 def compose_eps(
@@ -132,9 +143,10 @@ def compose_eps(
     """Compose an epsilon prediction from per-slot epsilons.
 
     Each per-slot forward conditions on ``[slot_k, registers]``; the composed
-    prediction is either ``mean_k eps_slot_k`` or a spatial weighted sum.
-    Weights are normalized over slots at each latent location and detached so
-    diffusion gradients do not directly rewrite encoder routing.
+    prediction is either ``mean_k eps_slot_k`` or a weighted sum. Spatial
+    weights are normalized over slots at each latent location; pooled scalar
+    weights are broadcast over the latent grid. Both are detached so diffusion
+    gradients do not directly rewrite encoder routing.
     """
     B = noisy_model_input.shape[0]
     slots = slot_tokens[:, :K]
@@ -288,9 +300,14 @@ def log_validation(
         with torch.autocast("cuda"):
             model_input = vae.encode(pixel_values).latent_dist.sample()
             composition_weights = None
-            if args.epsilon_composition == "slot_attn":
-                slot_tokens, composition_weights = latent_encoder(
+            if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
+                slot_tokens, slot_attn = latent_encoder(
                     pixel_values, return_attn=True
+                )
+                composition_weights = (
+                    pooled_slot_attention_weights(slot_attn)
+                    if args.epsilon_composition == "slot_attn_pool"
+                    else slot_attn
                 )
             else:
                 slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
@@ -306,10 +323,8 @@ def log_validation(
                 else torch.cat([slots[:, s : s + 1, :], registers], dim=1)
                 for s in range(K)
             ]
-            # Per-slot decode: under the mean-of-eps training objective each
-            # per-slot eps is already on a unit-noise scale, so guidance_scale=1
-            # matches what the model saw during training (the K==1 case of the
-            # mean).
+            # Per-slot decode isolates one slot at a time. Adaptive composition
+            # weights are applied only to the full reconstruction below.
             per_slot_images = [
                 pipeline(
                     prompt_embeds=embeds.to(
@@ -414,9 +429,14 @@ def log_validation(
             noisy = noise_scheduler.add_noise(model_input, noise, timesteps)
 
             composition_weights = None
-            if args.epsilon_composition == "slot_attn":
-                slot_tokens, composition_weights = latent_encoder(
+            if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
+                slot_tokens, slot_attn = latent_encoder(
                     pixel_values, return_attn=True
+                )
+                composition_weights = (
+                    pooled_slot_attention_weights(slot_attn)
+                    if args.epsilon_composition == "slot_attn_pool"
+                    else slot_attn
                 )
             else:
                 slot_tokens = latent_encoder(pixel_values)
@@ -602,12 +622,13 @@ def main(args):
     else:
         raise ValueError(f"Unknown unet config {args.unet_config}")
 
-    if args.epsilon_composition == "slot_attn" and not isinstance(
+    if args.epsilon_composition in ("slot_attn", "slot_attn_pool") and not isinstance(
         latent_encoder, SLOT_ATTN_ENCODER_CLASSES
     ):
         raise ValueError(
-            "--epsilon_composition slot_attn requires SlotAttentionEncoder or "
-            "DinoSlotAttentionEncoder so return_attn=True is available."
+            "--epsilon_composition slot_attn/slot_attn_pool requires "
+            "SlotAttentionEncoder or DinoSlotAttentionEncoder so "
+            "return_attn=True is available."
         )
 
     resume_checkpoint_name = resolve_resume_checkpoint_name(
@@ -982,9 +1003,14 @@ def main(args):
             noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
 
             composition_weights = None
-            if args.epsilon_composition == "slot_attn":
-                slot_tokens, composition_weights = latent_encoder(
+            if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
+                slot_tokens, slot_attn = latent_encoder(
                     pixel_values, return_attn=True
+                )
+                composition_weights = (
+                    pooled_slot_attention_weights(slot_attn)
+                    if args.epsilon_composition == "slot_attn_pool"
+                    else slot_attn
                 )
             else:
                 slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]

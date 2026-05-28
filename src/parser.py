@@ -325,11 +325,12 @@ def parse_args(input_args=None):
         "--epsilon_composition",
         type=str,
         default="mean",
-        choices=["mean", "slot_attn"],
+        choices=["mean", "slot_attn", "slot_attn_pool"],
         help=(
             "How to compose per-slot epsilon predictions. 'mean' uses uniform "
             "1/K weights; 'slot_attn' reuses detached encoder slot-attention "
-            "masks interpolated to the epsilon resolution."
+            "masks interpolated to the epsilon resolution; 'slot_attn_pool' "
+            "spatially pools those masks to one scalar weight per slot."
         ),
     )
     parser.add_argument(

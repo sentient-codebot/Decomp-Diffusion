@@ -336,14 +336,34 @@ composition addresses how much each slot is allowed to contribute at each
 denoiser spatial location.
 
 **Runs:**
-- 2026-05-28 -- first adaptive-weight baseline prepared: reuse detached Slot
-  Attention masks as epsilon composition weights, interpolate to latent/noise
-  resolution, and warm-start weights from the latest checkpoint produced by
-  `jobs/movi_e_coda_kv_only_train_eval.sh`. The continuation trains for a
-  fresh 50k steps in a separate output tree, not the CoDA K/V-only folder.
-  Script `jobs/movi_e_adaptive_eps_slot_attn_warmstart_train_eval.sh`; output
+- 2026-05-28 -- first adaptive-weight baseline completed: reuse detached
+  Slot Attention masks as epsilon composition weights, interpolate to
+  latent/noise resolution, and warm-start weights from the CoDA K/V-only
+  checkpoint. Training job `23179585`; corrected latest-checkpoint eval job
+  `23192429`; script
+  `jobs/movi_e_adaptive_eps_slot_attn_warmstart_train_eval.sh`; output
   `results/movi-e_adaptive_eps_slot_attn_warmstart/`; report
-  `docs/experiments/2026-05-28-movi-e-adaptive-eps-slot-attn.md`.
+  `docs/experiments/2026-05-28-movi-e-adaptive-eps-slot-attn.md`. Result:
+  methodological regression. The original eval reported FG-ARI 0.0087 / mBO
+  0.0279 / mIoU 0.0663; after fixing eval precision and SD scheduler usage,
+  the same checkpoint improved only to FG-ARI 0.0610 / mBO 0.0792 / mIoU
+  0.1197, still far below the rerun CoDA mean-weight baseline (job `23192654`:
+  FG-ARI 0.5160 / mBO 0.3451 / mIoU 0.3420). Do not promote detached
+  point-wise slot-attention weighting as-is. Future attempts should keep the
+  CoDA mean-weight baseline intact and test less destructive variants such as
+  frozen-encoder routing, gradual interpolation from mean to spatial weights,
+  or scalar per-slot weights.
+- 2026-05-28 -- scalar pooled adaptive-weight variant prepared: add
+  `--epsilon_composition slot_attn_pool`, which pools each Slot Attention mask
+  over spatial dimensions to one detached scalar per slot, normalizes over
+  slots, and broadcasts those weights over the UNet epsilon grid. This keeps
+  adaptive empty-slot suppression but removes point-wise mask routing from the
+  denoising target. Script
+  `jobs/movi_e_adaptive_eps_slot_attn_pool_warmstart_train_eval.sh`; output
+  `results/movi-e_adaptive_eps_slot_attn_pool_warmstart/`; report
+  `docs/experiments/2026-05-28-movi-e-adaptive-eps-slot-attn-pool.md`;
+  W&B project `latent_decomposed_diffusion_adaptive_eps`. Awaiting Slurm
+  submission and metrics.
 
 ## Object-centric representation metrics
 
@@ -483,19 +503,23 @@ comparison is about how much decoder capacity the slot conditioning needs to
 bind into. This landed as `--freeze_unet_except_kv` in `train_lsd.py`, so
 existing runs stay reproducible.
 
-- 2026-05-27 — MOVi-E CoDA-style K/V-only 200k-step train+eval job launched:
-  Slurm job `23146118`; script `jobs/movi_e_coda_kv_only_train_eval.sh`;
-  log `/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_23146118.log`; config
-  `configs/movi-e/dinov3_slot_encoder_d1024/config.json`; output
-  `results/movi-e_coda_kv_only/`; report target
+- 2026-05-27 — MOVi-E CoDA-style K/V-only 200k-step train+eval completed:
+  Slurm job `23151491`; script `jobs/movi_e_coda_kv_only_train_eval.sh`;
+  log `/home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_23151491.log`;
+  config `configs/movi-e/dinov3_slot_encoder_d1024/config.json`; output
+  `results/movi-e_coda_kv_only/`; report
   `docs/experiments/2026-05-27-movi-e-coda-kv-only.md`. Uses the
   mean-of-eps objective (`eps = mean_k eps_slot_k`) with registers
-  concatenated to each slot's conditioning sequence. An earlier attempt
-  (Slurm `23139442`) used the sum objective and was cancelled at ~3h /
-  step 20000: with a mostly-frozen pretrained UNet, asking each per-slot
-  eps to be ~noise/K so that the sum matches one noise is incompatible
-  with the pretrained output scale and not learnable through K/V alone.
-  Aborted checkpoints archived at
+  concatenated to each slot's conditioning sequence. Final checkpoint:
+  `results/movi-e_coda_kv_only/latent_decomposed_diffusion/checkpoint-200000-last`.
+  The train wrapper's metrics were FG-ARI 0.5032 / mBO 0.3373 / mIoU 0.3354;
+  eval-only rerun `23192654` reproduced the result with bf16 mask extraction
+  at FG-ARI 0.5160 / mBO 0.3451 / mIoU 0.3420. Treat this as the current
+  MOVi-E SD2.1 K/V-only baseline. An earlier attempt (Slurm `23139442`) used
+  the sum objective and was cancelled at ~3h / step 20000: with a
+  mostly-frozen pretrained UNet, asking each per-slot eps to be ~noise/K so
+  that the sum matches one noise is incompatible with the pretrained output
+  scale and not learnable through K/V alone. Aborted checkpoints archived at
   `results/movi-e_coda_kv_only_sum_aborted_20260527T134321Z/`.
 
 **DiT backbone, e.g. SD3 (out of scope for this paper, exploratory).** Same

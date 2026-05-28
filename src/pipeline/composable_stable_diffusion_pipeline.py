@@ -90,20 +90,26 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
 
 
 def prepare_slot_composition_weights(composition_weights, target_size, dtype, device):
-    """Resize, detach, and normalize [B, K, H, W] slot weights."""
-    if composition_weights.ndim != 4:
-        raise ValueError(
-            "composition_weights must have shape [B, K, H, W], got "
-            f"{tuple(composition_weights.shape)}"
-        )
+    """Normalize detached per-slot weights.
 
-    weights = composition_weights.float()
-    if tuple(weights.shape[-2:]) != tuple(target_size):
-        weights = torch.nn.functional.interpolate(
-            weights,
-            size=target_size,
-            mode="bilinear",
-            align_corners=False,
+    Accepts either spatial weights [B, K, H, W] or pooled scalar weights
+    [B, K]. Scalar weights are broadcast over the latent spatial grid.
+    """
+    if composition_weights.ndim == 2:
+        weights = composition_weights.float()[:, :, None, None]
+    elif composition_weights.ndim == 4:
+        weights = composition_weights.float()
+        if tuple(weights.shape[-2:]) != tuple(target_size):
+            weights = torch.nn.functional.interpolate(
+                weights,
+                size=target_size,
+                mode="bilinear",
+                align_corners=False,
+            )
+    else:
+        raise ValueError(
+            "composition_weights must have shape [B, K] or [B, K, H, W], got "
+            f"{tuple(composition_weights.shape)}"
         )
 
     weights = weights.clamp_min(0.0)
