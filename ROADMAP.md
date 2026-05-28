@@ -299,6 +299,15 @@ should explain that location.
   an unconditional/register prediction, or both objective variants. Keep the
   implementation explicit so mean-aggregation, sum-of-deltas, and register
   ablations remain comparable.
+- Re-using slot attention scores. The slot attention scores exactly sum up to 1 for every spatial location. We can simply do an interpolation to the latent resolution and use it as our composition weights. 
+- Decide gradient flow through the mask path. The first baseline should use
+  interpolated Slot Attention masks with `detach()`, so diffusion gradients
+  update `eps_slot_k` / slot content but do not directly rewrite the
+  encoder-side routing. Direct `eps_comp -> mask` gradients are a valid
+  ablation, but they should be treated carefully because the routing signal
+  may learn reconstruction shortcuts rather than object ownership; if enabled,
+  monitor slot mass, mask entropy, empty-slot suppression, and object-centric
+  metrics.
 
 **Validation plan:**
 - Start with MOVi-E, where GT masks make the mask behavior measurable.
