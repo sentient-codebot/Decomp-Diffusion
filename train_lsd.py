@@ -91,15 +91,50 @@ def _unfreeze_cross_attn_kv(unet):
     return kv_params
 
 
-def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
-    """Compose an epsilon prediction by averaging per-slot epsilons.
+def prepare_slot_composition_weights(
+    composition_weights,
+    target_size,
+    dtype,
+    device,
+):
+    """Resize, detach, and normalize per-slot composition weights."""
+    if composition_weights.ndim != 4:
+        raise ValueError(
+            "composition_weights must have shape [B, K, H, W], got "
+            f"{tuple(composition_weights.shape)}"
+        )
+
+    weights = composition_weights.float()
+    if tuple(weights.shape[-2:]) != tuple(target_size):
+        weights = F.interpolate(
+            weights,
+            size=target_size,
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    weights = weights.clamp_min(0.0)
+    denom = weights.sum(dim=1, keepdim=True)
+    uniform = torch.full_like(weights, 1.0 / weights.shape[1])
+    weights = torch.where(denom > 1e-6, weights / denom.clamp_min(1e-6), uniform)
+    return weights.detach().to(device=device, dtype=dtype)
+
+
+def compose_eps(
+    unet,
+    noisy_model_input,
+    timesteps,
+    slot_tokens,
+    K,
+    R,
+    composition_weights=None,
+):
+    """Compose an epsilon prediction from per-slot epsilons.
 
     Each per-slot forward conditions on ``[slot_k, registers]``; the composed
-    prediction is ``mean_k eps_slot_k``. Mean (not sum) keeps each per-slot
-    eps on a unit-noise scale, so a pretrained denoiser stays in its trained
-    output regime instead of being asked to predict ~noise/K per slot.
-    Registers (if any) ride along in every slot's conditioning sequence but
-    there is no separate registers-only forward.
+    prediction is either ``mean_k eps_slot_k`` or a spatial weighted sum.
+    Weights are normalized over slots at each latent location and detached so
+    diffusion gradients do not directly rewrite encoder routing.
     """
     B = noisy_model_input.shape[0]
     slots = slot_tokens[:, :K]
@@ -116,7 +151,55 @@ def compose_eps(unet, noisy_model_input, timesteps, slot_tokens, K, R):
 
     eps_slots = unet(noisy_expanded, timesteps_expanded, cond).sample
     eps_slots = eps_slots.view(B, K, *eps_slots.shape[1:])  # [B, K, C, H, W]
-    return eps_slots.mean(dim=1)
+    if composition_weights is None:
+        return eps_slots.mean(dim=1)
+
+    if composition_weights.shape[:2] != (B, K):
+        raise ValueError(
+            "composition_weights must start with [B, K] matching eps slots, got "
+            f"{tuple(composition_weights.shape[:2])} vs {(B, K)}"
+        )
+    weights = prepare_slot_composition_weights(
+        composition_weights,
+        target_size=eps_slots.shape[-2:],
+        dtype=eps_slots.dtype,
+        device=eps_slots.device,
+    )
+    return (eps_slots * weights[:, :, None]).sum(dim=1)
+
+
+def resolve_resume_checkpoint_name(output_dir, resume_from_checkpoint):
+    """Return the checkpoint folder name that should be resumed, if any."""
+    if not resume_from_checkpoint:
+        return None
+
+    if resume_from_checkpoint != "latest":
+        path = os.path.basename(resume_from_checkpoint.rstrip("/"))
+        return path if os.path.isdir(os.path.join(output_dir, path)) else None
+
+    if not os.path.isdir(output_dir):
+        return None
+    dirs = os.listdir(output_dir)
+    dirs = [d for d in dirs if d.startswith("checkpoint")]
+    dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+    return dirs[-1] if dirs else None
+
+
+def load_warm_start_weights(latent_encoder, unet, checkpoint_path):
+    """Load model weights from a checkpoint without optimizer/trainer state."""
+    if not os.path.isdir(checkpoint_path):
+        raise ValueError(f"Warm-start checkpoint does not exist: {checkpoint_path}")
+
+    for model in (latent_encoder, unet):
+        sub_dir = model._get_name().lower()
+        if not os.path.isdir(os.path.join(checkpoint_path, sub_dir)):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} is missing subfolder "
+                f"{sub_dir!r}."
+            )
+        load_model = type(model).from_pretrained(checkpoint_path, subfolder=sub_dir)
+        model.load_state_dict(load_model.state_dict(), strict=True)
+        del load_model
 
 
 @torch.no_grad()
@@ -204,7 +287,13 @@ def log_validation(
 
         with torch.autocast("cuda"):
             model_input = vae.encode(pixel_values).latent_dist.sample()
-            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
+            composition_weights = None
+            if args.epsilon_composition == "slot_attn":
+                slot_tokens, composition_weights = latent_encoder(
+                    pixel_values, return_attn=True
+                )
+            else:
+                slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
             K = latent_encoder_type.num_components
             R = getattr(latent_encoder_type, "num_registers", 0)
             slots = slot_tokens[:, :K]
@@ -245,6 +334,7 @@ def log_validation(
                 num_inference_steps=25,
                 generator=generator,
                 guidance_scale=1.0,
+                composition_weights=composition_weights,
                 output_type="pt",
             ).images
 
@@ -323,8 +413,22 @@ def log_validation(
             ).long()
             noisy = noise_scheduler.add_noise(model_input, noise, timesteps)
 
-            slot_tokens = latent_encoder(pixel_values)
-            model_pred = compose_eps(unet, noisy, timesteps, slot_tokens, K, R)
+            composition_weights = None
+            if args.epsilon_composition == "slot_attn":
+                slot_tokens, composition_weights = latent_encoder(
+                    pixel_values, return_attn=True
+                )
+            else:
+                slot_tokens = latent_encoder(pixel_values)
+            model_pred = compose_eps(
+                unet,
+                noisy,
+                timesteps,
+                slot_tokens,
+                K,
+                R,
+                composition_weights=composition_weights,
+            )
 
             if noise_scheduler.config.prediction_type == "epsilon":
                 target = noise
@@ -497,6 +601,28 @@ def main(args):
         )
     else:
         raise ValueError(f"Unknown unet config {args.unet_config}")
+
+    if args.epsilon_composition == "slot_attn" and not isinstance(
+        latent_encoder, SLOT_ATTN_ENCODER_CLASSES
+    ):
+        raise ValueError(
+            "--epsilon_composition slot_attn requires SlotAttentionEncoder or "
+            "DinoSlotAttentionEncoder so return_attn=True is available."
+        )
+
+    resume_checkpoint_name = resolve_resume_checkpoint_name(
+        args.output_dir, args.resume_from_checkpoint
+    )
+    if resume_checkpoint_name is None and args.warm_start_checkpoint:
+        accelerator.print(
+            f"Warm-starting model weights from {args.warm_start_checkpoint}"
+        )
+        load_warm_start_weights(latent_encoder, unet, args.warm_start_checkpoint)
+    elif resume_checkpoint_name is not None and args.warm_start_checkpoint:
+        logger.info(
+            "Skipping warm-start checkpoint because a resume checkpoint exists "
+            f"in the current output directory: {resume_checkpoint_name}"
+        )
 
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
 
@@ -785,22 +911,15 @@ def main(args):
     first_epoch = 0
     accumulate_steps = 0  # necessary for args.gradient_accumulation_steps > 1
 
-    # Potentially load in the weights and states from a previous save
+    # Potentially load in the weights and states from a previous save.
+    # If no current-run checkpoint exists, --warm_start_checkpoint has already
+    # loaded model weights only and training starts from step 0.
     if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint != "latest":
-            path = os.path.basename(
-                args.resume_from_checkpoint.rstrip("/")
-            )  # only the checkpoint folder name is needed, not the full path
-        else:
-            # Get the most recent checkpoint
-            dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
-
+        path = resume_checkpoint_name
         if path is None:
             accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
+                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. "
+                "Starting a new training run."
             )
             args.resume_from_checkpoint = None
             initial_global_step = 0
@@ -862,7 +981,13 @@ def main(args):
             # (this is the forward diffusion process)
             noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
 
-            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
+            composition_weights = None
+            if args.epsilon_composition == "slot_attn":
+                slot_tokens, composition_weights = latent_encoder(
+                    pixel_values, return_attn=True
+                )
+            else:
+                slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
 
             if not unet_optimized:
                 slot_tokens = slot_tokens.to(dtype=weight_dtype)
@@ -874,6 +999,7 @@ def main(args):
                 slot_tokens,
                 num_components,
                 num_registers,
+                composition_weights=composition_weights,
             )
 
             # Get the target for loss depending on the prediction type

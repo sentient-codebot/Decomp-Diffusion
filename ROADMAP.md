@@ -335,6 +335,16 @@ experiments. Registers address what information enters each slot; adaptive
 composition addresses how much each slot is allowed to contribute at each
 denoiser spatial location.
 
+**Runs:**
+- 2026-05-28 -- first adaptive-weight baseline prepared: reuse detached Slot
+  Attention masks as epsilon composition weights, interpolate to latent/noise
+  resolution, and warm-start weights from the latest checkpoint produced by
+  `jobs/movi_e_coda_kv_only_train_eval.sh`. The continuation trains for a
+  fresh 50k steps in a separate output tree, not the CoDA K/V-only folder.
+  Script `jobs/movi_e_adaptive_eps_slot_attn_warmstart_train_eval.sh`; output
+  `results/movi-e_adaptive_eps_slot_attn_warmstart/`; report
+  `docs/experiments/2026-05-28-movi-e-adaptive-eps-slot-attn.md`.
+
 ## Object-centric representation metrics
 
 **Goal:** broaden evaluation beyond per-component decoding grids and the

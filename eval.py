@@ -19,7 +19,11 @@ from PIL import Image
 from torchvision.utils import make_grid
 
 from src.data.dataset import build_image_dataset
-from src.models.encoder import load_latent_encoder
+from src.models.encoder import (
+    DinoSlotAttentionEncoder,
+    SlotAttentionEncoder,
+    load_latent_encoder,
+)
 from src.pipeline.composable_stable_diffusion_pipeline import (
     ComposableStableDiffusionPipeline,
 )
@@ -140,6 +144,17 @@ parser.add_argument(
     ),
 )
 
+parser.add_argument(
+    "--epsilon_composition",
+    type=str,
+    default="mean",
+    choices=["mean", "slot_attn"],
+    help=(
+        "How to compose per-slot epsilon predictions for reconstruction. "
+        "Use 'slot_attn' for checkpoints trained with adaptive slot masks."
+    ),
+)
+
 args = parser.parse_args()
 
 
@@ -176,6 +191,13 @@ def main(args):
     # Detects the encoder type (LatentEncoder vs SlotAttentionEncoder) from the
     # checkpoint subfolder, so eval works for either training run.
     latent_encoder = load_latent_encoder(args.ckpt_path)
+    if args.epsilon_composition == "slot_attn" and not isinstance(
+        latent_encoder, SlotAttentionEncoder | DinoSlotAttentionEncoder
+    ):
+        raise ValueError(
+            "--epsilon_composition slot_attn requires a slot-attention encoder "
+            "checkpoint so return_attn=True is available."
+        )
     latent_encoder = latent_encoder.to(device=accelerator.device, dtype=weight_dtype)
     print(f"loaded a trained {type(latent_encoder).__name__}")
 
@@ -253,7 +275,13 @@ def main(args):
         )
 
         with torch.autocast("cuda"):
-            slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
+            composition_weights = None
+            if args.epsilon_composition == "slot_attn":
+                slot_tokens, composition_weights = latent_encoder(
+                    pixel_values, return_attn=True
+                )
+            else:
+                slot_tokens = latent_encoder(pixel_values)  # [B, K+R, D]
             K = latent_encoder.num_components
             R = getattr(latent_encoder, "num_registers", 0)
             slots = slot_tokens[:, :K]
@@ -293,6 +321,7 @@ def main(args):
                 num_inference_steps=25,
                 generator=generator,
                 guidance_scale=1.0,
+                composition_weights=composition_weights,
                 output_type="pt",
             ).images
 

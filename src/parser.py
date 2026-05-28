@@ -312,6 +312,27 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--warm_start_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Optional checkpoint folder to load model weights from before training. "
+            "Optimizer, scheduler, and global step are not restored; if "
+            "--resume_from_checkpoint resolves inside --output_dir, resume wins."
+        ),
+    )
+    parser.add_argument(
+        "--epsilon_composition",
+        type=str,
+        default="mean",
+        choices=["mean", "slot_attn"],
+        help=(
+            "How to compose per-slot epsilon predictions. 'mean' uses uniform "
+            "1/K weights; 'slot_attn' reuses detached encoder slot-attention "
+            "masks interpolated to the epsilon resolution."
+        ),
+    )
+    parser.add_argument(
         "--scheduler_config",
         type=str,
         default=None,

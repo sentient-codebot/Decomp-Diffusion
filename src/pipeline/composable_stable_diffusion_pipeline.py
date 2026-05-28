@@ -89,6 +89,30 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     return noise_cfg
 
 
+def prepare_slot_composition_weights(composition_weights, target_size, dtype, device):
+    """Resize, detach, and normalize [B, K, H, W] slot weights."""
+    if composition_weights.ndim != 4:
+        raise ValueError(
+            "composition_weights must have shape [B, K, H, W], got "
+            f"{tuple(composition_weights.shape)}"
+        )
+
+    weights = composition_weights.float()
+    if tuple(weights.shape[-2:]) != tuple(target_size):
+        weights = torch.nn.functional.interpolate(
+            weights,
+            size=target_size,
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    weights = weights.clamp_min(0.0)
+    denom = weights.sum(dim=1, keepdim=True)
+    uniform = torch.full_like(weights, 1.0 / weights.shape[1])
+    weights = torch.where(denom > 1e-6, weights / denom.clamp_min(1e-6), uniform)
+    return weights.detach().to(device=device, dtype=dtype)
+
+
 def retrieve_timesteps(
     scheduler,
     num_inference_steps: int | None = None,
@@ -906,8 +930,9 @@ class ComposableStableDiffusionPipeline(
         guidance_rescale: float = 0.0,
         clip_skip: int | None = None,
         callback_on_step_end: Callable[[int, int, dict], None] | None = None,
-        callback_on_step_end_tensor_inputs: list[str] = ["latents"],
+        callback_on_step_end_tensor_inputs: list[str] | None = None,
         num_registers: int = 0,
+        composition_weights: torch.FloatTensor | None = None,
         **kwargs,
     ):
         r"""
@@ -1003,6 +1028,9 @@ class ComposableStableDiffusionPipeline(
                 "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider using `callback_on_step_end`",
             )
 
+        if callback_on_step_end_tensor_inputs is None:
+            callback_on_step_end_tensor_inputs = ["latents"]
+
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
@@ -1069,6 +1097,22 @@ class ComposableStableDiffusionPipeline(
         slots = prompt_embeds[:, :K]  # [B, K, D]
         registers = prompt_embeds[:, K:] if num_registers > 0 else None
 
+        if composition_weights is not None:
+            if composition_weights.shape[1] != K:
+                raise ValueError(
+                    "composition_weights must have one channel per slot, got "
+                    f"{composition_weights.shape[1]} for K={K}."
+                )
+            if composition_weights.shape[0] == batch_size and num_images_per_prompt > 1:
+                composition_weights = composition_weights.repeat_interleave(
+                    num_images_per_prompt, dim=0
+                )
+            if composition_weights.shape[0] != slots.shape[0]:
+                raise ValueError(
+                    "composition_weights batch must match prompt embeddings, got "
+                    f"{composition_weights.shape[0]} vs {slots.shape[0]}."
+                )
+
         if ip_adapter_image is not None:
             output_hidden_state = (
                 False
@@ -1096,6 +1140,14 @@ class ComposableStableDiffusionPipeline(
             generator,
             latents,
         )
+        slot_weights = None
+        if composition_weights is not None:
+            slot_weights = prepare_slot_composition_weights(
+                composition_weights,
+                target_size=latents.shape[-2:],
+                dtype=latents.dtype,
+                device=device,
+            )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -1129,8 +1181,9 @@ class ComposableStableDiffusionPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latents, t)
 
                 # Per-slot conditional epsilons: [slot_k, registers]. The
-                # composed prediction is the mean (matches training).
-                eps_slots_sum = None
+                # composed prediction is uniform mean unless slot weights are
+                # supplied by the encoder for reconstruction-style sampling.
+                eps_comp = None
                 for k in range(K):
                     cond_k = slots[:, k : k + 1, :]
                     if registers is not None:
@@ -1144,16 +1197,19 @@ class ComposableStableDiffusionPipeline(
                         added_cond_kwargs=added_cond_kwargs,
                         return_dict=False,
                     )[0]
-                    eps_slots_sum = eps_k if eps_slots_sum is None else eps_slots_sum + eps_k
+                    if slot_weights is None:
+                        eps_k = eps_k / K
+                    else:
+                        eps_k = eps_k * slot_weights[:, k : k + 1]
+                    eps_comp = eps_k if eps_comp is None else eps_comp + eps_k
 
-                eps_slots_mean = eps_slots_sum / K
-                noise_pred = cfg_scale * eps_slots_mean
+                noise_pred = cfg_scale * eps_comp
 
                 if self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                     noise_pred = rescale_noise_cfg(
                         noise_pred,
-                        eps_slots_mean,
+                        eps_comp,
                         guidance_rescale=self.guidance_rescale,
                     )
 
