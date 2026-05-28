@@ -118,7 +118,7 @@ if [ -n "$CKPT" ]; then
         --mixed_precision bf16 --seed 42 \
         --batch_size 8 --num_validation_images 16 \
         --output_dir "$RUN_DIR/gen_images" \
-        --scheduler_config configs/movi-e/scheduler/scheduler_config.json \
+        --scheduler_config pretrain_sd \
         --dataset_root "$VAL_SHARD_ROOT" \
         --dataset_glob '**/00000000_image.png' \
         --dataset_format wds --resolution "$RESOLUTION" \
@@ -146,6 +146,7 @@ if [ -n "$CKPT" ]; then
         --resolution "$RESOLUTION" \
         --batch_size 16 \
         --num_workers 4 \
+        --mixed_precision bf16 \
         --output_dir "$METRICS_DIR"
     EVAL_METRICS_RC=$?
 else

@@ -63,6 +63,7 @@ uv run python eval_movi.py \
     --resolution "$RESOLUTION" \
     --batch_size 16 \
     --num_workers 4 \
+    --mixed_precision bf16 \
     --output_dir "$METRICS_DIR"
 EVAL_RC=$?
 END=$(date +%s)

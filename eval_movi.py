@@ -80,7 +80,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
         "--mixed_precision",
-        default="fp16",
+        default="bf16",
         choices=["no", "fp16", "bf16"],
     )
     return p.parse_args()
@@ -162,6 +162,12 @@ def main():
         pixel_values = batch["pixel_values"].to(device=device, dtype=dtype)
         gt = batch["segment"].to(device=device)  # [B, H, W]
         _, attn = encoder(pixel_values, return_attn=True)  # attn [B, K, h, w]
+        if not torch.isfinite(attn).all():
+            bad = (~torch.isfinite(attn)).sum().item()
+            raise RuntimeError(
+                f"non-finite slot attention masks in batch {batch_idx}: "
+                f"{bad} values with --mixed_precision {args.mixed_precision}"
+            )
         attn_up = F.interpolate(
             attn.float(),
             size=(args.resolution, args.resolution),

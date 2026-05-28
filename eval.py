@@ -114,7 +114,10 @@ parser.add_argument(
     "--scheduler_config",
     type=str,
     default=None,
-    help="Path to a config file for the scheduler.",
+    help=(
+        "Path to a config file for the scheduler, or 'pretrain_sd' to load the "
+        "scheduler from --pretrained_model_name/subfolder=scheduler."
+    ),
     required=True,
 )
 
@@ -177,8 +180,13 @@ def main(args):
     # If passed along, set the training seed now.
     set_seed(args.seed)
 
-    noise_scheduler_config = DDPMScheduler.load_config(args.scheduler_config)
-    noise_scheduler = DDPMScheduler.from_config(noise_scheduler_config)
+    if args.scheduler_config == "pretrain_sd":
+        noise_scheduler = DDPMScheduler.from_pretrained(
+            args.pretrained_model_name, subfolder="scheduler"
+        )
+    else:
+        noise_scheduler_config = DDPMScheduler.load_config(args.scheduler_config)
+        noise_scheduler = DDPMScheduler.from_config(noise_scheduler_config)
 
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name, subfolder="vae")
     vae.to(accelerator.device, dtype=weight_dtype)
