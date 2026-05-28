@@ -53,10 +53,30 @@ prior pushes the encoder to learn better object-level representations.
 |--------|---------------|--------------------------|
 | FG-ARI | 0.5032 | see 2026-05-26-movi-e-dinov3-registers.md |
 | mBO    | 0.3373   | see 2026-05-26-movi-e-dinov3-registers.md |
+| mIoU   | 0.3354 | see 2026-05-26-movi-e-dinov3-registers.md |
 | Frames | 6000 | -- |
 
 Full metrics: results/movi-e_coda_kv_only/metrics/metrics.json
 Attention-mask viz: results/movi-e_coda_kv_only/metrics/viz_*.jpg
+
+### Latest-checkpoint rerun
+
+Eval-only job `23192654` reran the final checkpoint
+`results/movi-e_coda_kv_only/latent_decomposed_diffusion/checkpoint-200000-last`
+after the evaluation path was tightened to use bf16 slot-mask extraction. The
+rerun reproduces the strong object-centric result and confirms the checkpoint
+is a valid baseline for comparing the adaptive epsilon-composition run.
+
+| Metric | Rerun value |
+|--------|-------------|
+| FG-ARI | 0.5160 |
+| mBO | 0.3451 |
+| mIoU | 0.3420 |
+| Frames | 6000 |
+| Wall time | 00:06:35 |
+
+Rerun metrics: results/movi-e_coda_kv_only/metrics_latest_23192654/metrics.json
+Rerun attention-mask viz: results/movi-e_coda_kv_only/metrics_latest_23192654/viz_*.jpg
 
 ### Reconstruction grids and curves
 
