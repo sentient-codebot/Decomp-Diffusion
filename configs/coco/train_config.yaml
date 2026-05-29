@@ -4,7 +4,7 @@
 # defaults; any flag passed on the `accelerate launch` command line overrides
 # them. Run/machine-specific paths (output_dir, dataset_root, dataset_glob and
 # the model component config paths) are intentionally NOT here -- pass those
-# on the command line (see jobs/coco_coda_kv_only_train.sh).
+# on the command line (see jobs/coco_coda_kv_only_train_eval.sh).
 #
 # Mirrors configs/movi-e/train_config.yaml. Differences:
 # - COCO has ~118k train images (vs ~96k MOVi-E frames) and no preprocessed
