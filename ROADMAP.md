@@ -414,10 +414,10 @@ score is the headline number — it tests whether the decoder can render
 unseen slot combinations, which is what "compositional generation"
 actually means.
 
-**Target dataset: COCO.** Training-side loader landed; eval-side (masks,
-FID/KID) is still open.
+**Target dataset: COCO.** Training-side loader and mask-based object metrics
+landed; FID/KID and compositional sampling are still open.
 
-**Done (training side):**
+**Done:**
 - `configs/coco/` mirrors `configs/movi-e/` with K=7 / R=4 /
   latent_dim=1024 (CoDA-style K/V-only recipe on SD2.1).
 - COCO data downloads to `~/prjs0993/datasets/coco/` via
@@ -429,10 +429,16 @@ FID/KID) is still open.
   the downloaded COCO train2017 (~118k JPGs). Pixels are read via the
   existing `GlobDataset` — sony/coda also uses a plain image glob for
   the training side, so no new dataset class is needed yet.
+- `eval_coco.py` rasterizes non-crowd polygon instance annotations from
+  `instances_val2017.json` and reports FG-ARI, mBO, mIoU, per-category
+  mBO, COCO-size-bin mBO, foreground fraction, and slot usage.
+- `jobs/coco_coda_kv_only_eval_latest.sh` runs COCO object metrics against
+  the latest complete checkpoint and writes
+  `docs/experiments/2026-05-28-coco-coda-kv-only-eval.md`.
 
 **Still open before this section is "done":**
-- `CocoDataset` for mask/annotation-aware eval (instance masks from
-  pycocotools, mirroring sony/coda's `COCO2017Dataset`).
+- RLE/crowd mask support via `pycocotools`; the current eval covers standard
+  non-crowd polygon instances.
 - Wire FID/KID via `cleanfid` or `torchmetrics.image`; add the dep behind
   an extra in `pyproject.toml`.
 - Compositional sampling: assemble cross-batch slot mixtures (e.g. roll
@@ -442,10 +448,16 @@ FID/KID) is still open.
 
 **Runs:**
 - 2026-05-27 — COCO CoDA-style K/V-only 200k-step train job (Slurm id
-  TBD, script `jobs/coco_coda_kv_only_train.sh`; config
+  23177437, script `jobs/coco_coda_kv_only_train.sh`; config
   `configs/coco/dinov3_slot_encoder_d1024/config.json`; output
-  `results/coco_coda_kv_only/`; report target
-  `docs/experiments/2026-05-27-coco-coda-kv-only.md`).
+  `results/coco_coda_kv_only/`; report
+  `docs/experiments/2026-05-27-coco-coda-kv-only.md`). Result: reached
+  `checkpoint-200000-last`, then exited nonzero on a final DDP barrier
+  timeout.
+- 2026-05-28 — COCO object metrics on the latest checkpoint (Slurm id
+  23193898, script `jobs/coco_coda_kv_only_eval_latest.sh`; report
+  `docs/experiments/2026-05-28-coco-coda-kv-only-eval.md`). Result:
+  FG-ARI 0.3470, mBO 0.2558, mIoU 0.2500 over 5000 val images.
 
 ## VOC support (planned)
 

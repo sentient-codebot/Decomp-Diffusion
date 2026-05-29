@@ -3,10 +3,8 @@
 # encoder + register slots. Mirrors jobs/movi_e_coda_kv_only_train_eval.sh on
 # the encoder/diffusion side; differences are:
 #   - Dataset is COCO train2017 (~118k JPGs at variable resolution; resized
-#     to 256 by GlobDataset). No ground-truth segmentation pipeline yet on
-#     this codebase, so the MOVi-E-specific FG-ARI / mBO eval is skipped --
-#     eval will follow once a COCO-side eval script lands (mask-based or
-#     compositional FID/KID).
+#     to 256 by GlobDataset). Object-centric COCO metrics are run separately
+#     by jobs/coco_coda_kv_only_eval_latest.sh.
 #   - num_components (K) reduced from 24 to 7. COCO scenes typically have
 #     2-8 prominent instances; the K=24 sweep belongs to MOVi-E's
 #     synthetic-clutter regime. Revisit if slot_pairwise_cos stays low.
@@ -29,7 +27,7 @@
 
 module load 2025
 
-cd ~/projects/Decomp-Diffusion/.claude/worktrees/feat-coco-dataset
+cd ~/projects/Decomp-Diffusion
 
 # uv-managed env; keep caches/logs off the home quota. DINOv3 and SD2.1
 # weights live in HF_HOME.
@@ -224,11 +222,9 @@ with 4 register slots and latent_dim=1024. Tests whether the
 object-centric encoder + frozen denoiser prior we developed on synthetic
 MOVi-E transfers to natural images.
 
-Object-discovery metrics (FG-ARI / mBO / mIoU) and compositional FID/KID
-are *not* wired yet on the COCO side -- see ROADMAP "Compositional image
-generation metrics (planned)". This run is the prerequisite for that
-work: get a checkpoint trained on COCO so the eval pieces can be built
-against it.
+Object-discovery metrics (FG-ARI / mBO / mIoU) are run separately by
+\`jobs/coco_coda_kv_only_eval_latest.sh\`. Compositional FID/KID is still
+open -- see ROADMAP "Compositional image generation metrics (planned)".
 
 ## Configuration
 
@@ -267,10 +263,9 @@ Loss + slot-pairwise-cos curves: $LOSS_PNG
 
 - K=7 is a placeholder for COCO scene complexity; revise based on
   collapse / binding diagnostics from this run.
-- Object-centric and compositional generation metrics for COCO are not
-  yet implemented in this codebase -- expect a follow-up that adds a
-  CocoMaskDataset (pycocotools-driven, mirroring sony/coda's
-  COCO2017Dataset) and an eval_coco.py.
+- The final DDP barrier can time out after the last checkpoint is written;
+  run \`jobs/coco_coda_kv_only_eval_latest.sh\` against the latest complete
+  checkpoint to collect COCO object metrics.
 EOF
 
 echo "**************** [coco-coda] report written to $REPORT ($OVERALL) ****************"

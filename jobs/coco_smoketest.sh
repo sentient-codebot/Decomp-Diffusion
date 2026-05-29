@@ -25,7 +25,7 @@
 
 module load 2025
 
-cd ~/projects/Decomp-Diffusion/.claude/worktrees/feat-coco-dataset
+cd ~/projects/Decomp-Diffusion
 
 export HF_HOME="$HOME/prjs0993/Decomp-Diffusion/cache/huggingface"
 export WANDB_DIR="$HOME/prjs0993/Decomp-Diffusion/wandb"
