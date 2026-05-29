@@ -44,7 +44,7 @@ uv sync --extra wandb --extra tensorboard --extra xformers
 RUN_DIR=results/coco_coda_kv_only
 REPORT=docs/experiments/2026-05-29-coco-coda-kv-only-train-eval.md
 COCO_ROOT="$HOME/prjs0993/datasets/coco"
-MAX_STEPS=400000
+MAX_STEPS=500000  # same as coda
 RESOLUTION=256
 PER_GPU_BATCH=8
 mkdir -p "$RUN_DIR" "$WANDB_DIR" "$(dirname "$REPORT")"
