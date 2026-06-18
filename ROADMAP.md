@@ -4,6 +4,15 @@ Longer-term direction: bigger changes, methodological shifts, planned architectu
 For known shortcuts and deferred fixes, see `TECHDEBT.md`.
 
 
+## Current focus
+
+Prioritize MOVi-E before advancing MOVi-E and COCO in parallel. MOVi-E has
+ground-truth masks, lower evaluation ambiguity, and already exposes the
+adaptive-composition / warm-start failure modes we need to understand. COCO
+remains useful as a transfer check after the MOVi-E recipe is stable, but it
+should not drive architecture or objective choices at the current stage.
+
+
 ## Setup validation
 
 **Goal:** confirm the current end-to-end setup actually works before building on it.
@@ -335,6 +344,14 @@ experiments. Registers address what information enters each slot; adaptive
 composition addresses how much each slot is allowed to contribute at each
 denoiser spatial location.
 
+**Warm-start caveat:** the first adaptive-epsilon runs were warm-started from
+the MOVi-E CoDA K/V-only checkpoint. Their collapse is therefore confounded:
+it is highly suspected that switching an already-specialized mean-eps baseline
+onto a new routing objective is itself what damages the representation, rather
+than adaptive weights alone. Future MOVi-E adaptive ablations should include a
+from-scratch or no-warm-start control before treating the adaptive objective as
+the cause of collapse.
+
 **Runs:**
 - 2026-05-28 -- first adaptive-weight baseline completed: reuse detached
   Slot Attention masks as epsilon composition weights, interpolate to
@@ -350,9 +367,9 @@ denoiser spatial location.
   0.1197, still far below the rerun CoDA mean-weight baseline (job `23192654`:
   FG-ARI 0.5160 / mBO 0.3451 / mIoU 0.3420). Do not promote detached
   point-wise slot-attention weighting as-is. Future attempts should keep the
-  CoDA mean-weight baseline intact and test less destructive variants such as
-  frozen-encoder routing, gradual interpolation from mean to spatial weights,
-  or scalar per-slot weights.
+  CoDA mean-weight baseline intact and test from-scratch / no-warm-start
+  controls, frozen-encoder routing, gradual interpolation from mean to spatial
+  weights, or scalar per-slot weights.
 - 2026-05-28 -- scalar pooled adaptive-weight variant prepared: add
   `--epsilon_composition slot_attn_pool`, which pools each Slot Attention mask
   over spatial dimensions to one detached scalar per slot, normalizes over

@@ -57,6 +57,24 @@ The `--freeze_unet_except_kv` mode (`jobs/movi_e_coda_kv_only_train_eval.sh`) fr
 
 **Fix / follow-up:** add a re-init ablation (Kaiming or zero-init the K/V before training) and compare against the warm-start variant. Until that is run, treat the warm-start choice as load-bearing and re-flag this in the experiment report.
 
+## Adaptive epsilon warm-start confound
+
+The first adaptive epsilon runs, especially
+`jobs/movi_e_adaptive_eps_slot_attn_warmstart_train_eval.sh` and
+`jobs/movi_e_adaptive_eps_slot_attn_pool_warmstart_train_eval.sh`, warm-started
+from the MOVi-E CoDA K/V-only checkpoint and then changed the epsilon
+composition objective. Because both the starting point and objective changed,
+the resulting collapse cannot be attributed to adaptive weights alone. The
+current working suspicion is that warm-starting an already-specialized
+mean-eps baseline into a different routing objective is itself a collapse
+trigger.
+
+**Fix / follow-up:** before drawing conclusions from adaptive epsilon weights,
+run MOVi-E controls that remove the warm-start confound: train the same
+adaptive composition from scratch, or introduce the new routing gradually while
+freezing or lowering the LR on the encoder. Keep COCO secondary until the
+MOVi-E behavior is understood.
+
 ## DDP cleanup timeout after main-process-only final work
 
 `train_lsd.py` runs checkpointing and validation only on `accelerator.is_main_process`, but the other DDP ranks continue through the loop and then wait at the final `accelerator.wait_for_everyone()`. On long multi-GPU runs this can leave non-main ranks waiting in a NCCL collective while rank 0 is still doing final validation, checkpointing, or tracker shutdown. The MOVi-E CoDA K/V-only run hit this at the end of training: Slurm job 23151491 saved `results/movi-e_coda_kv_only/latent_decomposed_diffusion/checkpoint-200000-last`, then rank 1 timed out after 605s in NCCL and the wrapper reported `training finished (rc=1)`. The checkpoint is usable, but the job status is noisy and downstream eval can be cut short.
