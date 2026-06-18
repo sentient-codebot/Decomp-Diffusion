@@ -1,24 +1,28 @@
 # MOVi-E encoder configs -- side by side
 
-Reference table comparing the three encoder front ends configured for MOVi-E.
-All three project to `num_components=11` slots of `latent_dim=64` for the UNet
-cross-attention; they differ only in what produces the feature map fed into
-the slot read-out.
+Reference table comparing the encoder front ends configured for MOVi-E. The
+important distinction is between the raw/model input resolution, the
+slot-attention feature grid, and the SD-VAE diffusion latent grid.
 
-| Encoder | Config | Input image | Feature map (H x W) | Feature dim |
-|---|---|---|---|---|
-| Plain CNN (`LatentEncoder` / `SlotAttentionEncoder`) | `configs/movi-e/{latent,slot}_encoder/config.json` | 128 x 128 | 16 x 16 (3 stride-2 convs from 128) | 1024 (`enc_channels=128` x 2^3) |
-| DINO v1 (`facebook/dino-vits8`) | `configs/movi-e/dino_slot_encoder/config.json` | 128 x 128 | 16 x 16 (patch=8 -> 128/8) | 384 (ViT-S hidden) |
-| DINO v3 (`facebook/dinov3-vits16-pretrain-lvd1689m`) | `configs/movi-e/dinov3_slot_encoder/config.json` | 256 x 256 | 16 x 16 (patch=16 -> 256/16) | 384 (ViT-S hidden) |
+| Encoder / run family | Config | Model input | Feature map (H x W) | Feature dim | Object slots K | Registers R | Slot dim | Diffusion latent grid |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Plain CNN (`LatentEncoder` / `SlotAttentionEncoder`) | `configs/movi-e/{latent,slot}_encoder/config.json` | 128 x 128 | 16 x 16 (3 stride-2 convs from 128) | 1024 (`enc_channels=128` x 2^3) | 11 | 0 | 64 | 16 x 16 x 4 |
+| DINO v1 (`facebook/dino-vits8`) | `configs/movi-e/dino_slot_encoder/config.json` | 128 x 128 | 16 x 16 (patch=8 -> 128/8) | 384 (ViT-S hidden) | 11 | 0 | 64 | 16 x 16 x 4 |
+| DINOv3 controlled / register run | `configs/movi-e/dinov3_slot_encoder/config.json` | 256 x 256 | 16 x 16 (patch=16 -> 256/16) | 384 (ViT-S hidden) | 24 | 4 | 64 | 32 x 32 x 4 |
+| DINOv3 CoDA-style K/V-only run | `configs/movi-e/dinov3_slot_encoder_d1024/config.json` | 256 x 256 | 16 x 16 (patch=16 -> 256/16) | 384 (ViT-S hidden) | 24 | 4 | 1024 | 32 x 32 x 4 |
+| DINOv3 CoDA-style K/V-only 512 run | `configs/movi-e/dinov3_slot_encoder_d1024_512/config.json` | 512 x 512 | 32 x 32 (patch=16 -> 512/16) | 384 (ViT-S hidden) | 24 | 4 | 1024 | 64 x 64 x 4 |
 
 Notes:
-- Both DINO configs were sized to land on the same 16 x 16 token grid as the
-  CNN baseline -- DINOv3 bumps the image to 256 so that patch=16 still yields
-  16 x 16.
+- MOVi-E is preprocessed from the TFDS `movi_e/256x256:1.0.0` release. Any
+  512 input run upsamples the stored 256 x 256 frames through the dataset
+  transform before the DINO backbone and SD VAE see them.
+- `latent_dim` is the slot-token dimension used as UNet cross-attention
+  conditioning. It is not the SD-VAE latent channel count. The SD2.1 VAE latent
+  is always 4 channels with an 8x spatial downsample.
 - For `LatentEncoder`, the 16 x 16 x 1024 map exists internally but is
-  immediately flattened + linearly read out into the 11 slots (no slot
-  attention); for the other two it's positional-embedded and fed to Slot
-  Attention (`src/models/encoder.py:166`, `src/models/encoder.py:238`).
-- `configs/movi-e/train_config.yaml` sets `resolution: 128`, so the DINOv3
-  run additionally needs `--resolution 256` on the launch line to match its
-  `image_size=256`.
+  immediately flattened and linearly read out into slots. The slot-attention
+  encoders instead keep the spatial feature map, positional-embed it, and feed
+  it to Slot Attention.
+- `configs/movi-e/train_config.yaml` still defaults to `resolution: 128`.
+  DINOv3 launch scripts must override this with `--resolution 256` or
+  `--resolution 512` to match their encoder `image_size`.
