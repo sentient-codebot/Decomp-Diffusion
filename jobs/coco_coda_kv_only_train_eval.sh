@@ -1,5 +1,5 @@
 #!/bin/bash
-# COCO 2017 continuation training + eval -- CoDA-style frozen SD2.1 UNet +
+# COCO 2017 from-scratch training + eval -- CoDA-style frozen SD2.1 UNet +
 # DINOv3 slot encoder + register slots. Mirrors
 # jobs/movi_e_coda_kv_only_train_eval.sh on the encoder/diffusion side;
 # differences are:
@@ -14,9 +14,9 @@
 # Depends on data laid down by jobs/coco_download.sh
 # (~/prjs0993/datasets/coco/images/train2017/*.jpg).
 #
-# Restart-safe: --resume_from_checkpoint latest picks up the most recent
-# checkpoint. MAX_STEPS is 400k so this continues from the previous 200k run
-# instead of immediately exiting after reload.
+# Starts from scratch in a job-specific output directory. Requeue/resubmission
+# should submit a new run unless this script is changed to resume that exact
+# output directory.
 #
 # Submit from the repo root: `sbatch jobs/coco_coda_kv_only_train_eval.sh`.
 #SBATCH --job-name="coco_coda_kv_only_train_eval"
@@ -41,7 +41,8 @@ export TORCHINDUCTOR_CACHE_DIR="$HOME/prjs0993/tmp/torchinductor"
 source .venv/bin/activate
 uv sync --extra wandb --extra tensorboard --extra xformers
 
-RUN_DIR=results/coco_coda_kv_only
+RUN_TAG="scratch_500k_${SLURM_JOB_ID:-manual_$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN_DIR="results/coco_coda_kv_only/${RUN_TAG}"
 REPORT=docs/experiments/2026-05-29-coco-coda-kv-only-train-eval.md
 COCO_ROOT="$HOME/prjs0993/datasets/coco"
 MAX_STEPS=500000  # same as coda
@@ -101,7 +102,6 @@ uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
     --report_to wandb \
     --resolution "$RESOLUTION" \
     --train_batch_size "$PER_GPU_BATCH" \
-    --resume_from_checkpoint latest \
     --max_train_steps "$MAX_STEPS"
 TRAIN_RC=$?
 TRAIN_END=$(date +%s)
@@ -290,13 +290,13 @@ EVAL_DUR=$(fmt_dur $((END - EVAL_START)))
 [ "$EVAL_RECON_RC" -eq 0 ] && EVAL_RECON_RESULT="PASS" || EVAL_RECON_RESULT="FAIL (rc=$EVAL_RECON_RC)"
 [ "$EVAL_METRICS_RC" -eq 0 ] && EVAL_METRICS_RESULT="PASS" || EVAL_METRICS_RESULT="FAIL (rc=$EVAL_METRICS_RC)"
 if [ "$TRAIN_RC" -eq 0 ] && [ "$EVAL_RECON_RC" -eq 0 ] && [ "$EVAL_METRICS_RC" -eq 0 ]; then
-    OVERALL="PASS -- full continuation completed, train + both evals clean"
+    OVERALL="PASS -- full from-scratch run completed, train + both evals clean"
 else
     OVERALL="FAIL -- see /home/nlin/prjs0993/Decomp-Diffusion/slurm_logs/slurm_${SLURM_JOB_ID}.log"
 fi
 
 cat > "$REPORT" <<EOF
-# COCO CoDA-style K/V-only continuation -- 400k-step run
+# COCO CoDA-style K/V-only from-scratch -- 500k-step run
 
 **Status:** $OVERALL
 **Date:** $(date -u +%Y-%m-%dT%H:%MZ)
@@ -306,12 +306,13 @@ cat > "$REPORT" <<EOF
 
 ## Purpose
 
-Continuation of the first COCO CoDA-style run from the latest checkpoint
-(previously \`checkpoint-200000-last\`) to a 400k-step target. Same recipe
-as the MOVi-E K/V-only baseline (\`2026-05-27-movi-e-coda-kv-only.md\`):
+Fresh 500k-step COCO CoDA-style run from pretrained SD2.1 and randomly
+initialized DINOv3 slot/register components. Same recipe as the MOVi-E
+K/V-only baseline (\`2026-05-27-movi-e-coda-kv-only.md\`):
 frozen SD2.1 UNet except for cross-attn K/V projections, DINOv3 slot encoder
-with 4 register slots and latent_dim=1024. Tests whether longer training
-improves natural-image slot binding after the initial 200k-step run.
+with 4 register slots and latent_dim=1024. Tests whether a clean 500k-step
+trajectory improves natural-image slot binding relative to the earlier
+continued COCO run.
 
 Object-discovery metrics (FG-ARI / mBO / mIoU) are computed in this job
 from COCO val2017 instance annotations. Compositional FID/KID is still open
@@ -331,7 +332,7 @@ from COCO val2017 instance annotations. Compositional FID/KID is still open
 | Trainable UNet params | cross-attn to_k + to_v only |
 | Scheduler | SD2.1 DDPM (loaded from --pretrained_model_name/subfolder=scheduler) |
 | Loss | mean-of-eps composition (eps = mean_k eps_slot_k, registers ride along) |
-| Steps target | $MAX_STEPS configured (resume_from_checkpoint latest) |
+| Steps target | $MAX_STEPS configured (from scratch; no resume) |
 | Effective batch | 16 (2 GPU x $PER_GPU_BATCH) |
 | Resolution | 256 (32x32 latent vs SD2.1's native 64x64) |
 | Mixed precision | bf16 |
@@ -376,7 +377,7 @@ Per-step validation viz: $RUN_DIR/latent_decomposed_diffusion/logs/
 ## Assessment
 
 <!-- Fill in after reviewing metrics + viz:
-     - Did continuing from 200k to 400k improve COCO binding metrics?
+     - Did the clean 500k run improve COCO binding metrics?
      - Did slot_pairwise_cos stay low (slots specialise) or trend toward 1?
      - Do reconstruction grids show object-specific slots or texture/background collapse? -->
 
