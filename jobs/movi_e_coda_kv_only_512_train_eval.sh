@@ -88,6 +88,8 @@ uv run accelerate launch --multi_gpu --num_processes=2 --mixed_precision bf16 \
     --report_to wandb \
     --resolution "$RESOLUTION" \
     --train_batch_size "$PER_GPU_BATCH" \
+    --val_batch_size 8 \
+    --num_validation_images 32 \
     --gradient_accumulation_steps "$GRAD_ACCUM" \
     --resume_from_checkpoint latest \
     --max_train_steps "$MAX_STEPS"

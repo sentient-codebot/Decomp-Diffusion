@@ -301,9 +301,7 @@ def log_validation(
             model_input = vae.encode(pixel_values).latent_dist.sample()
             composition_weights = None
             if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
-                slot_tokens, slot_attn = latent_encoder(
-                    pixel_values, return_attn=True
-                )
+                slot_tokens, slot_attn = latent_encoder(pixel_values, return_attn=True)
                 composition_weights = (
                     pooled_slot_attention_weights(slot_attn)
                     if args.epsilon_composition == "slot_attn_pool"
@@ -377,9 +375,13 @@ def log_validation(
             .numpy()
         )
         im = Image.fromarray(ndarr)
-        images.append(im)
         img_path = os.path.join(image_log_dir, f"image_{batch_idx:02}.jpg")
         im.save(img_path, optimize=True, quality=95)
+
+        # Keep local grids full resolution, but cap tracker copies for W&B/TensorBoard.
+        log_im = im.copy()
+        log_im.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+        images.append(log_im)
         image_count += pixel_values.shape[0]
         if image_count >= args.num_validation_images:
             break
@@ -430,9 +432,7 @@ def log_validation(
 
             composition_weights = None
             if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
-                slot_tokens, slot_attn = latent_encoder(
-                    pixel_values, return_attn=True
-                )
+                slot_tokens, slot_attn = latent_encoder(pixel_values, return_attn=True)
                 composition_weights = (
                     pooled_slot_attention_weights(slot_attn)
                     if args.epsilon_composition == "slot_attn_pool"
@@ -1004,9 +1004,7 @@ def main(args):
 
             composition_weights = None
             if args.epsilon_composition in ("slot_attn", "slot_attn_pool"):
-                slot_tokens, slot_attn = latent_encoder(
-                    pixel_values, return_attn=True
-                )
+                slot_tokens, slot_attn = latent_encoder(pixel_values, return_attn=True)
                 composition_weights = (
                     pooled_slot_attention_weights(slot_attn)
                     if args.epsilon_composition == "slot_attn_pool"
