@@ -57,6 +57,44 @@ The `--freeze_unet_except_kv` mode (`jobs/movi_e_coda_kv_only_train_eval.sh`) fr
 
 **Fix / follow-up:** add a re-init ablation (Kaiming or zero-init the K/V before training) and compare against the warm-start variant. Until that is run, treat the warm-start choice as load-bearing and re-flag this in the experiment report.
 
+## Train loss is logged after gradient-accumulation scaling
+
+`train_lsd.py` divides `loss` by `args.gradient_accumulation_steps` before
+calling `accelerator.backward(loss)`, then logs that already-scaled tensor as
+`loss`. This makes the W&B train-loss curves numerically depend on the
+accumulation factor. For example, the MOVi-E CoDA K/V-only 512 job uses
+`PER_GPU_BATCH=2` and `GRAD_ACCUM=4` to keep the effective batch at 16, whereas
+the 256 job uses `PER_GPU_BATCH=8` and accumulation 1. The 512 logged train
+loss is therefore about 4x lower purely from logging scale, before considering
+any real resolution effect.
+
+`val_loss` does not have this accumulation division and is the better raw-MSE
+comparison, but note that the training-time `val_dataset` is currently carved
+from `--dataset_root` rather than the MOVi-E validation shard root. With
+`train_split_portion=1.0`, it uses the last 10% of the training shards for
+that cheap diffusion-loss diagnostic.
+
+**Fix:** log both the optimization loss and an unscaled `train_loss_mse`
+(`loss * gradient_accumulation_steps`, or the pre-divide value) so curves remain
+comparable across memory-driven accumulation changes. If the metric is meant to
+be validation loss, add an explicit validation dataset root instead of deriving
+it from the train root.
+
+## MOVi-E 512 runs upsample 256px source frames
+
+`jobs/movi_e_coda_kv_only_512_train_eval.sh` sets `--resolution 512` and uses
+`configs/movi-e/dinov3_slot_encoder_d1024_512/config.json`, but the MOVi-E WDS
+source frames are the TFDS 256 x 256 images. The dataset transform resizes
+those frames to 512 x 512 before DINOv3 and VAE encoding. So the 512 run tests
+a denser DINOv3 patch grid (32 x 32 instead of 16 x 16) and a native-size SD
+latent grid (64 x 64 x 4 instead of 32 x 32 x 4), not access to higher-fidelity
+MOVi-E renders.
+
+**Fix / follow-up:** keep reports explicit that this is an upsampled-resolution
+comparison. Do not interpret improved loss, reconstruction quality, or
+object-centric metrics as evidence from higher-resolution source data unless a
+true higher-resolution MOVi-E render pipeline is added.
+
 ## Adaptive epsilon warm-start confound
 
 The first adaptive epsilon runs, especially
